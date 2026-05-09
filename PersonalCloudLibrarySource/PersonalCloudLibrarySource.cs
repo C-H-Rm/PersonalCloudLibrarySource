@@ -12,6 +12,7 @@ namespace PersonalCloudLibrarySource
     public class PersonalCloudLibrarySource : LibraryPlugin
     {
         private static readonly ILogger logger = LogManager.GetLogger();
+        private readonly RcloneManifestReader rcloneManifestReader = new RcloneManifestReader();
 
         private PersonalCloudLibrarySourceSettingsViewModel settings { get; set; }
 
@@ -45,90 +46,132 @@ namespace PersonalCloudLibrarySource
                     return importedGames;
                 }
 
-                if (string.IsNullOrWhiteSpace(pluginSettings.LocalManifestPath))
-                {
-                    logger.Info("Personal Cloud Library Source local manifest path is empty. No games imported.");
-                    return importedGames;
-                }
-
-                if (!File.Exists(pluginSettings.LocalManifestPath))
-                {
-                    logger.Warn($"Personal Cloud Library Source manifest was not found: {pluginSettings.LocalManifestPath}");
-                    return importedGames;
-                }
-
-                var json = File.ReadAllText(pluginSettings.LocalManifestPath);
-                var manifest = Serialization.FromJson<PersonalCloudLibraryManifest>(json);
-
-                if (manifest == null || manifest.Items == null)
-                {
-                    logger.Warn("Personal Cloud Library Source manifest was empty or invalid.");
-                    return importedGames;
-                }
-
-                var importedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-                foreach (var item in manifest.Items)
-                {
-                    if (item == null)
-                    {
-                        continue;
-                    }
-
-                    if (string.IsNullOrWhiteSpace(item.Id) || string.IsNullOrWhiteSpace(item.Title))
-                    {
-                        logger.Warn("Skipped manifest item because it was missing an id or title.");
-                        continue;
-                    }
-
-                    if (!importedIds.Add(item.Id))
-                    {
-                        logger.Warn($"Skipped duplicate manifest item id: {item.Id}");
-                        continue;
-                    }
-
-                    var launchPath = ResolveLaunchPath(item, pluginSettings);
-                    var installDirectory = ResolveInstallDirectory(item, pluginSettings, launchPath);
-                    var launchFileExists = !string.IsNullOrWhiteSpace(launchPath) && File.Exists(launchPath);
-
-                    var game = new GameMetadata
-                    {
-                        GameId = item.Id,
-                        Name = item.Title,
-                        IsInstalled = pluginSettings.TreatMissingFilesAsUninstalled ? launchFileExists : true,
-                        InstallDirectory = installDirectory
-                    };
-
-                    if (!string.IsNullOrWhiteSpace(item.Notes))
-                    {
-                        game.Description = item.Notes;
-                    }
-
-                    if (launchFileExists)
-                    {
-                        game.GameActions = new List<GameAction>
-                        {
-                            new GameAction
-                            {
-                                Type = GameActionType.File,
-                                Path = launchPath,
-                                WorkingDir = installDirectory,
-                                IsPlayAction = true
-                            }
-                        };
-                    }
-
-                    importedGames.Add(game);
-                }
-
-                logger.Info($"Personal Cloud Library Source imported {importedGames.Count} manifest entries.");
-                return importedGames;
+                var json = LoadManifestJson(pluginSettings);
+                var manifest = ParseManifest(json);
+                importedGames = ConvertManifestItemsToGameMetadata(manifest, pluginSettings);
             }
             catch (Exception ex)
             {
                 logger.Error(ex, "Personal Cloud Library Source failed to import the manifest.");
-                return importedGames;
             }
+
+            logger.Info($"Personal Cloud Library Source imported {importedGames.Count} manifest entries.");
+            return importedGames;
+        }
+
+        private string LoadManifestJson(PersonalCloudLibrarySourceSettings pluginSettings)
+        {
+            var manifestSourceMode = string.IsNullOrWhiteSpace(pluginSettings.ManifestSourceMode)
+                ? PersonalCloudLibrarySourceSettings.LocalFileManifestSourceMode
+                : pluginSettings.ManifestSourceMode;
+
+            if (string.Equals(
+                manifestSourceMode,
+                PersonalCloudLibrarySourceSettings.RcloneRemoteManifestSourceMode,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                logger.Info("Personal Cloud Library Source loading manifest using rclone.");
+                return rcloneManifestReader.ReadManifestJson(pluginSettings);
+            }
+
+            if (!string.Equals(
+                manifestSourceMode,
+                PersonalCloudLibrarySourceSettings.LocalFileManifestSourceMode,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Manifest source mode must be LocalFile or RcloneRemote.");
+            }
+
+            if (string.IsNullOrWhiteSpace(pluginSettings.LocalManifestPath))
+            {
+                throw new InvalidOperationException("Personal Cloud Library Source local manifest path is empty.");
+            }
+
+            if (!File.Exists(pluginSettings.LocalManifestPath))
+            {
+                throw new FileNotFoundException("Personal Cloud Library Source manifest was not found.", pluginSettings.LocalManifestPath);
+            }
+
+            return File.ReadAllText(pluginSettings.LocalManifestPath);
+        }
+
+        private static PersonalCloudLibraryManifest ParseManifest(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                throw new InvalidOperationException("Personal Cloud Library Source manifest JSON was empty.");
+            }
+
+            var manifest = Serialization.FromJson<PersonalCloudLibraryManifest>(json);
+            if (manifest == null || manifest.Items == null)
+            {
+                throw new InvalidOperationException("Personal Cloud Library Source manifest was empty or invalid.");
+            }
+
+            return manifest;
+        }
+
+        private static List<GameMetadata> ConvertManifestItemsToGameMetadata(
+            PersonalCloudLibraryManifest manifest,
+            PersonalCloudLibrarySourceSettings pluginSettings)
+        {
+            var importedGames = new List<GameMetadata>();
+            var importedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var item in manifest.Items)
+            {
+                if (item == null)
+                {
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(item.Id) || string.IsNullOrWhiteSpace(item.Title))
+                {
+                    logger.Warn("Skipped manifest item because it was missing an id or title.");
+                    continue;
+                }
+
+                if (!importedIds.Add(item.Id))
+                {
+                    logger.Warn($"Skipped duplicate manifest item id: {item.Id}");
+                    continue;
+                }
+
+                var launchPath = ResolveLaunchPath(item, pluginSettings);
+                var installDirectory = ResolveInstallDirectory(item, pluginSettings, launchPath);
+                var launchFileExists = !string.IsNullOrWhiteSpace(launchPath) && File.Exists(launchPath);
+
+                var game = new GameMetadata
+                {
+                    GameId = item.Id,
+                    Name = item.Title,
+                    IsInstalled = pluginSettings.TreatMissingFilesAsUninstalled ? launchFileExists : true,
+                    InstallDirectory = installDirectory
+                };
+
+                if (!string.IsNullOrWhiteSpace(item.Notes))
+                {
+                    game.Description = item.Notes;
+                }
+
+                if (launchFileExists)
+                {
+                    game.GameActions = new List<GameAction>
+                    {
+                        new GameAction
+                        {
+                            Type = GameActionType.File,
+                            Path = launchPath,
+                            WorkingDir = installDirectory,
+                            IsPlayAction = true
+                        }
+                    };
+                }
+
+                importedGames.Add(game);
+            }
+
+            return importedGames;
         }
 
         private static string ResolveLaunchPath(PersonalCloudLibraryItem item, PersonalCloudLibrarySourceSettings pluginSettings)

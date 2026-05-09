@@ -8,15 +8,29 @@ namespace PersonalCloudLibrarySource
 {
     public class PersonalCloudLibrarySourceSettings : ObservableObject
     {
+        public const string LocalFileManifestSourceMode = "LocalFile";
+        public const string RcloneRemoteManifestSourceMode = "RcloneRemote";
+
         private bool enabled = true;
+        private string manifestSourceMode = LocalFileManifestSourceMode;
         private string localManifestPath = string.Empty;
         private string localCacheFolder = string.Empty;
         private bool treatMissingFilesAsUninstalled = true;
+        private string rcloneExecutablePath = "rclone";
+        private string rcloneRemoteName = string.Empty;
+        private string rcloneManifestPath = string.Empty;
+        private int rcloneTimeoutSeconds = 30;
 
         public bool Enabled
         {
             get => enabled;
             set => SetValue(ref enabled, value);
+        }
+
+        public string ManifestSourceMode
+        {
+            get => manifestSourceMode;
+            set => SetValue(ref manifestSourceMode, value);
         }
 
         public string LocalManifestPath
@@ -35,6 +49,30 @@ namespace PersonalCloudLibrarySource
         {
             get => treatMissingFilesAsUninstalled;
             set => SetValue(ref treatMissingFilesAsUninstalled, value);
+        }
+
+        public string RcloneExecutablePath
+        {
+            get => rcloneExecutablePath;
+            set => SetValue(ref rcloneExecutablePath, value);
+        }
+
+        public string RcloneRemoteName
+        {
+            get => rcloneRemoteName;
+            set => SetValue(ref rcloneRemoteName, value);
+        }
+
+        public string RcloneManifestPath
+        {
+            get => rcloneManifestPath;
+            set => SetValue(ref rcloneManifestPath, value);
+        }
+
+        public int RcloneTimeoutSeconds
+        {
+            get => rcloneTimeoutSeconds;
+            set => SetValue(ref rcloneTimeoutSeconds, value);
         }
     }
 
@@ -80,11 +118,49 @@ namespace PersonalCloudLibrarySource
         public bool VerifySettings(out List<string> errors)
         {
             errors = new List<string>();
+            var manifestSourceMode = string.IsNullOrWhiteSpace(Settings.ManifestSourceMode)
+                ? PersonalCloudLibrarySourceSettings.LocalFileManifestSourceMode
+                : Settings.ManifestSourceMode;
 
-            if (!string.IsNullOrWhiteSpace(Settings.LocalManifestPath) &&
-                !File.Exists(Settings.LocalManifestPath))
+            if (string.Equals(
+                manifestSourceMode,
+                PersonalCloudLibrarySourceSettings.LocalFileManifestSourceMode,
+                StringComparison.OrdinalIgnoreCase))
             {
-                errors.Add("The local manifest file does not exist.");
+                if (!string.IsNullOrWhiteSpace(Settings.LocalManifestPath) &&
+                    !File.Exists(Settings.LocalManifestPath))
+                {
+                    errors.Add("The local manifest file does not exist.");
+                }
+            }
+            else if (string.Equals(
+                manifestSourceMode,
+                PersonalCloudLibrarySourceSettings.RcloneRemoteManifestSourceMode,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(Settings.RcloneExecutablePath))
+                {
+                    errors.Add("The rclone executable path is required for RcloneRemote mode.");
+                }
+
+                if (string.IsNullOrWhiteSpace(Settings.RcloneRemoteName))
+                {
+                    errors.Add("The rclone remote name is required for RcloneRemote mode.");
+                }
+
+                if (string.IsNullOrWhiteSpace(Settings.RcloneManifestPath))
+                {
+                    errors.Add("The rclone manifest path is required for RcloneRemote mode.");
+                }
+
+                if (Settings.RcloneTimeoutSeconds < 5 || Settings.RcloneTimeoutSeconds > 300)
+                {
+                    errors.Add("The rclone timeout must be between 5 and 300 seconds.");
+                }
+            }
+            else
+            {
+                errors.Add("Manifest source mode must be LocalFile or RcloneRemote.");
             }
 
             if (!string.IsNullOrWhiteSpace(Settings.LocalCacheFolder) &&

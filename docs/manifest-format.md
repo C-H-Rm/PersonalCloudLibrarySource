@@ -1,6 +1,6 @@
 # Manifest Format
 
-MVP 0 reads a local JSON manifest with this structure:
+MVP 0 reads a local JSON manifest with this structure. Phase 2A can read the same JSON format from an existing rclone remote.
 
 ```json
 {
@@ -32,3 +32,5 @@ MVP 0 reads a local JSON manifest with this structure:
 - `notes`: Optional text imported as the Playnite description.
 
 When `TreatMissingFilesAsUninstalled` is true, entries with missing launch files are imported as uninstalled.
+
+The manifest format is the same whether `ManifestSourceMode` is `LocalFile` or `RcloneRemote`.
