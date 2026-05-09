@@ -1,0 +1,16 @@
+D:\PersonalCloudLibrarySource\PersonalCloudLibrarySource\obj\Debug\PersonalCloudLibrarySource.csproj.AssemblyReference.cache
+D:\PersonalCloudLibrarySource\PersonalCloudLibrarySource\obj\Debug\App.baml
+D:\PersonalCloudLibrarySource\PersonalCloudLibrarySource\obj\Debug\PersonalCloudLibrarySourceSettingsView.baml
+D:\PersonalCloudLibrarySource\PersonalCloudLibrarySource\obj\Debug\PersonalCloudLibrarySourceSettingsView.g.cs
+D:\PersonalCloudLibrarySource\PersonalCloudLibrarySource\obj\Debug\PersonalCloudLibrarySource_MarkupCompile.cache
+D:\PersonalCloudLibrarySource\PersonalCloudLibrarySource\obj\Debug\PersonalCloudLibrarySource.g.resources
+D:\PersonalCloudLibrarySource\PersonalCloudLibrarySource\obj\Debug\PersonalCloudLibrarySource.csproj.CoreCompileInputs.cache
+D:\PersonalCloudLibrarySource\PersonalCloudLibrarySource\bin\Debug\extension.yaml
+D:\PersonalCloudLibrarySource\PersonalCloudLibrarySource\bin\Debug\icon.png
+D:\PersonalCloudLibrarySource\PersonalCloudLibrarySource\bin\Debug\Localization\en_US.xaml
+D:\PersonalCloudLibrarySource\PersonalCloudLibrarySource\bin\Debug\PersonalCloudLibrarySource.dll
+D:\PersonalCloudLibrarySource\PersonalCloudLibrarySource\bin\Debug\PersonalCloudLibrarySource.pdb
+D:\PersonalCloudLibrarySource\PersonalCloudLibrarySource\bin\Debug\Playnite.SDK.dll
+D:\PersonalCloudLibrarySource\PersonalCloudLibrarySource\obj\Debug\Personal.8DF925D2.Up2Date
+D:\PersonalCloudLibrarySource\PersonalCloudLibrarySource\obj\Debug\PersonalCloudLibrarySource.dll
+D:\PersonalCloudLibrarySource\PersonalCloudLibrarySource\obj\Debug\PersonalCloudLibrarySource.pdb

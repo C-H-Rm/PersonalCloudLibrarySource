@@ -1,0 +1,32 @@
+﻿{
+  "version": 1,
+  "items": [
+    {
+      "id": "example-adventure",
+      "title": "Example Adventure",
+      "platform": "Example Platform",
+      "localPath": "ExampleAdventure\\ExampleAdventure.bat",
+      "installDirectory": "ExampleAdventure",
+      "launchFile": "ExampleAdventure.bat",
+      "notes": "Fake local sample entry for testing. No game content is included."
+    },
+    {
+      "id": "example-puzzle-pack",
+      "title": "Example Puzzle Pack",
+      "platform": "Example Platform",
+      "localPath": "ExamplePuzzlePack\\ExamplePuzzlePack.bat",
+      "installDirectory": "ExamplePuzzlePack",
+      "launchFile": "ExamplePuzzlePack.bat",
+      "notes": "Fake sample entry for testing manifest import."
+    },
+    {
+      "id": "example-homebrew-demo",
+      "title": "Example Homebrew Demo",
+      "platform": "Homebrew",
+      "localPath": "ExampleHomebrewDemo\\ExampleHomebrewDemo.bat",
+      "installDirectory": "ExampleHomebrewDemo",
+      "launchFile": "ExampleHomebrewDemo.bat",
+      "notes": "Placeholder for user-owned or homebrew content."
+    }
+  ]
+}
