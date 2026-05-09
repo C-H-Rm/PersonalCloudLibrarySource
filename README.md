@@ -1,20 +1,25 @@
 # Personal Cloud Library Source
 
-A Playnite library plugin that imports user-supplied personal library entries from a local JSON manifest.
+A Playnite library plugin that imports user-supplied personal library entries into Playnite's normal library view.
 
 ## Current Status
 
-MVP 0: local JSON manifest import works.
+Personal Cloud Library Source supports provider-based manifest import from a local JSON file, a local folder or mounted drive, and generic rclone remotes.
 
 ## What It Does
 
-Personal Cloud Library Source reads a local JSON manifest, imports entries into Playnite, and launches local files if they exist.
-
-Phase 2A also supports reading the same manifest JSON through an existing rclone remote by running `rclone cat`. Phase 2B can copy a selected missing item from the configured rclone remote into the local cache.
+- Reads a JSON manifest and imports every valid entry into Playnite.
+- Shows cached/local entries as installed with a Play action.
+- Shows cloud-only or missing entries as uninstalled.
+- Exposes `Download to local cache` when the provider can copy the entry source file.
+- Supports Google Drive, OneDrive, Dropbox, and similar providers through the user's existing rclone setup.
+- Supports local folders, external drives, mounted drives, and NAS folders directly without rclone.
 
 ## What It Does Not Do
 
-This plugin does not provide games, ROMs, BIOS files, cracks, keys, copyrighted artwork, download links, scraping, or copyrighted content.
+This plugin does not provide games, ROMs, BIOS files, cracks, keys, copyrighted artwork, download links, scraping, or copyrighted content. Users are responsible for only using files they own or have rights to use.
+
+The plugin does not authenticate to Google Drive or OneDrive directly, does not store OAuth credentials, and does not auto-download before launch.
 
 ## Setup
 
@@ -26,43 +31,45 @@ This plugin does not provide games, ROMs, BIOS files, cracks, keys, copyrighted 
    ```
 
 3. Restart Playnite.
-4. Configure:
+4. Configure one provider:
 
    ```text
-   ManifestSourceMode = LocalFile
+   SourceProviderType = LocalFile
    LocalManifestPath = D:\PersonalCloudLibrarySource\samples\personal-cloud-library.sample.json
    LocalCacheFolder = D:\PersonalCloudLibraryCache
    ```
 
 5. Run Update Game Library.
 
-## Phase 2A Rclone Manifest Mode
+## Provider Modes
 
-`LocalFile` remains the default manifest source mode.
+`LocalFile` reads a specific manifest file. Downloads are only possible when an item's `sourcePath` can be resolved as a local file path.
 
-`RcloneRemote` mode requires the user to configure rclone separately before using the plugin. The plugin does not authenticate to Google Drive directly and does not store OAuth credentials. Manifest retrieval only reads JSON with `rclone cat`.
+`LocalFolder` reads a manifest from `LocalLibraryRoot + ManifestRelativePath` and copies item files from `LocalLibraryRoot + sourcePath`.
 
-Example settings:
+`RcloneRemote` reads a manifest with `rclone cat` and downloads item files with `rclone copyto`.
+
+Example rclone settings:
 
 ```text
-ManifestSourceMode = RcloneRemote
+SourceProviderType = RcloneRemote
 RcloneExecutablePath = rclone
-RcloneRemoteName = my_remote
-RcloneManifestPath = PersonalLibrary/manifest.json
+RcloneRemoteName = google_drive
+RcloneManifestPath = PersonalLibrary/personal-cloud-library.sample.json
+RcloneContentRoot = PersonalLibrary/files
 RcloneTimeoutSeconds = 30
 LocalCacheFolder = D:\PersonalCloudLibraryCache
+AllowDownloads = true
 ```
 
-## Phase 2B Rclone Item Copy
-
-Manifest items can include an optional `remotePath`. If an item is missing locally and `AllowRcloneDownloads` is enabled, Playnite can expose a `Download to local cache` install action for that item.
-
-This phase does not auto-download before launch. It only copies a selected item from the user's configured rclone remote into the local cache. The plugin does not provide content; it only copies files from the remote configured by the user.
-
-Manual rclone test command:
+Example local folder settings:
 
 ```text
-rclone copyto my_remote:PersonalLibrary/files/ExampleAdventure/ExampleAdventure.bat D:\PersonalCloudLibraryCache\ExampleAdventure\ExampleAdventure.bat
+SourceProviderType = LocalFolder
+LocalLibraryRoot = E:\PersonalLibrary
+ManifestRelativePath = personal-cloud-library.sample.json
+LocalCacheFolder = D:\PersonalCloudLibraryCache
+AllowDownloads = true
 ```
 
 ## Expected Sample Entries
@@ -73,12 +80,12 @@ rclone copyto my_remote:PersonalLibrary/files/ExampleAdventure/ExampleAdventure.
 
 ## Manifest Format
 
-The manifest is a JSON file with a top-level `version` and an `items` array. It can be loaded from a local file or fetched from an rclone remote. Each item can define a stable `id`, a display `title`, optional `platform`, path fields for launch resolution, optional `remotePath`, and optional `notes`.
+The manifest is a JSON file with a top-level `version` and an `items` array. Items use `sourcePath` for provider source files. Legacy `remotePath` remains supported as a fallback.
 
-See [docs/manifest-format.md](docs/manifest-format.md) for the current MVP 0 field reference.
+See [docs/manifest-format.md](docs/manifest-format.md) for the field reference.
 
 ## Roadmap
 
 - Phase 1: local manifest validation and UI polish.
-- Phase 2: optional rclone provider.
+- Phase 2: provider-based local folder and rclone copy support.
 - Phase 3: cache verification/hash checks.

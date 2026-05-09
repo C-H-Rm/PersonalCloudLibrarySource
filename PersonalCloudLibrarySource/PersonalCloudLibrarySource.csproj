@@ -48,6 +48,7 @@
     <Reference Include="WindowsBase" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="LocalFileCopier.cs" />
     <Compile Include="PersonalCloudLibrarySourceClient.cs" />
     <Compile Include="PersonalCloudLibrarySource.cs" />
     <Compile Include="PersonalCloudLibrarySourceSettings.cs" />

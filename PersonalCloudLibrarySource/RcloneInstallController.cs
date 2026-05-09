@@ -1,7 +1,6 @@
 using Playnite.SDK;
 using Playnite.SDK.Models;
 using Playnite.SDK.Plugins;
-using System.Collections.ObjectModel;
 using System.IO;
 
 namespace PersonalCloudLibrarySource
@@ -13,16 +12,19 @@ namespace PersonalCloudLibrarySource
         private readonly PersonalCloudLibraryItem item;
         private readonly PersonalCloudLibrarySourceSettings settings;
         private readonly RcloneFileCopier rcloneFileCopier;
+        private readonly LocalFileCopier localFileCopier;
 
         public RcloneInstallController(
             Game game,
             PersonalCloudLibraryItem item,
             PersonalCloudLibrarySourceSettings settings,
-            RcloneFileCopier rcloneFileCopier) : base(game)
+            RcloneFileCopier rcloneFileCopier,
+            LocalFileCopier localFileCopier) : base(game)
         {
             this.item = item;
             this.settings = settings;
             this.rcloneFileCopier = rcloneFileCopier;
+            this.localFileCopier = localFileCopier;
             Name = "Download to local cache";
         }
 
@@ -31,23 +33,49 @@ namespace PersonalCloudLibrarySource
             var launchPath = PersonalCloudLibrarySource.ResolveLaunchPath(item, settings);
             var installDirectory = PersonalCloudLibrarySource.ResolveInstallDirectory(item, settings, launchPath);
             var destinationFilePath = PersonalCloudLibrarySource.ResolveDownloadDestinationFilePath(item, settings, launchPath);
+            var sourcePath = PersonalCloudLibrarySource.GetItemSourcePath(item);
 
-            var result = rcloneFileCopier.CopyRemoteFileToLocalPath(settings, item.RemotePath, destinationFilePath);
-            if (!result.Succeeded)
+            logger.Info($"Personal Cloud Library Source downloading item {item.Id} to {destinationFilePath}.");
+            var providerType = PersonalCloudLibrarySource.GetProviderType(settings);
+            var succeeded = false;
+            string message = null;
+            System.Exception exception = null;
+
+            if (string.Equals(providerType, PersonalCloudLibrarySourceSettings.RcloneRemoteProviderType, System.StringComparison.OrdinalIgnoreCase))
             {
-                if (result.Exception != null)
+                var rcloneSourcePath = PersonalCloudLibrarySource.ResolveRcloneSourcePath(settings, sourcePath);
+                var result = rcloneFileCopier.CopyRemoteFileToLocalPath(settings, rcloneSourcePath, destinationFilePath);
+                succeeded = result.Succeeded;
+                message = result.Message;
+                exception = result.Exception;
+            }
+            else
+            {
+                var localSourcePath = PersonalCloudLibrarySource.ResolveLocalFolderSourcePath(settings, sourcePath);
+                var result = localFileCopier.CopyFileToLocalPath(localSourcePath, destinationFilePath);
+                succeeded = result.Succeeded;
+                message = result.Message;
+                exception = result.Exception;
+            }
+
+            if (!succeeded)
+            {
+                if (exception != null)
                 {
-                    logger.Error(result.Exception, $"Personal Cloud Library Source failed to download item {item.Id}: {result.Message}");
+                    logger.Error(exception, $"Personal Cloud Library Source failed to download item {item.Id}: {message}");
                 }
                 else
                 {
-                    logger.Error($"Personal Cloud Library Source failed to download item {item.Id}: {result.Message}");
+                    logger.Error($"Personal Cloud Library Source failed to download item {item.Id}: {message}");
                 }
 
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(launchPath) || !File.Exists(launchPath))
+            var expectedLaunchFileExists = !string.IsNullOrWhiteSpace(launchPath) && File.Exists(launchPath);
+            logger.Info($"Personal Cloud Library Source download result for {item.Id}: expected launch file exists={expectedLaunchFileExists}.");
+
+            if (!expectedLaunchFileExists)
             {
                 logger.Warn($"Personal Cloud Library Source downloaded item {item.Id}, but the expected launch file was not found.");
                 return;
@@ -56,18 +84,10 @@ namespace PersonalCloudLibrarySource
             Game.IsInstalled = true;
             Game.InstallDirectory = installDirectory;
 
-            if (Game.GameActions == null)
+            InvokeOnInstalled(new GameInstalledEventArgs(new GameInstallationData
             {
-                Game.GameActions = new ObservableCollection<GameAction>();
-            }
-
-            Game.GameActions.Add(new GameAction
-            {
-                Type = GameActionType.File,
-                Path = launchPath,
-                WorkingDir = installDirectory,
-                IsPlayAction = true
-            });
+                InstallDirectory = installDirectory
+            }));
 
             logger.Info($"Personal Cloud Library Source downloaded item {item.Id} to local cache.");
         }

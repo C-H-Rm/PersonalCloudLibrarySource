@@ -1,4 +1,4 @@
-﻿{
+{
   "version": 1,
   "items": [
     {
@@ -8,7 +8,7 @@
       "localPath": "ExampleAdventure\\ExampleAdventure.bat",
       "installDirectory": "ExampleAdventure",
       "launchFile": "ExampleAdventure.bat",
-      "remotePath": "PersonalLibrary/files/ExampleAdventure/ExampleAdventure.bat",
+      "sourcePath": "ExampleAdventure/ExampleAdventure.bat",
       "notes": "Fake local sample entry for testing. No game content is included."
     },
     {
@@ -18,7 +18,7 @@
       "localPath": "ExamplePuzzlePack\\ExamplePuzzlePack.bat",
       "installDirectory": "ExamplePuzzlePack",
       "launchFile": "ExamplePuzzlePack.bat",
-      "remotePath": "PersonalLibrary/files/ExamplePuzzlePack/ExamplePuzzlePack.bat",
+      "sourcePath": "ExamplePuzzlePack/ExamplePuzzlePack.bat",
       "notes": "Fake sample entry for testing manifest import."
     },
     {
@@ -28,7 +28,7 @@
       "localPath": "ExampleHomebrewDemo\\ExampleHomebrewDemo.bat",
       "installDirectory": "ExampleHomebrewDemo",
       "launchFile": "ExampleHomebrewDemo.bat",
-      "remotePath": "PersonalLibrary/files/ExampleHomebrewDemo/ExampleHomebrewDemo.bat",
+      "sourcePath": "ExampleHomebrewDemo/ExampleHomebrewDemo.bat",
       "notes": "Placeholder for user-owned or homebrew content."
     }
   ]

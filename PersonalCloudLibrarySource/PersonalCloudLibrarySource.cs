@@ -3,7 +3,6 @@ using Playnite.SDK.Data;
 using Playnite.SDK.Models;
 using Playnite.SDK.Plugins;
 using System;
-using System.Collections.ObjectModel;
 using System.Collections.Generic;
 using System.IO;
 using System.Windows.Controls;
@@ -15,6 +14,7 @@ namespace PersonalCloudLibrarySource
         private static readonly ILogger logger = LogManager.GetLogger();
         private readonly RcloneManifestReader rcloneManifestReader = new RcloneManifestReader();
         private readonly RcloneFileCopier rcloneFileCopier = new RcloneFileCopier();
+        private readonly LocalFileCopier localFileCopier = new LocalFileCopier();
 
         private PersonalCloudLibrarySourceSettingsViewModel settings { get; set; }
 
@@ -30,7 +30,6 @@ namespace PersonalCloudLibrarySource
 
             Properties = new LibraryPluginProperties
             {
-                HasCustomizedGameImport = true,
                 HasSettings = true
             };
         }
@@ -38,6 +37,7 @@ namespace PersonalCloudLibrarySource
         public override IEnumerable<GameMetadata> GetGames(LibraryGetGamesArgs args)
         {
             var importedGames = new List<GameMetadata>();
+            var diagnostics = new List<string>();
 
             try
             {
@@ -49,40 +49,24 @@ namespace PersonalCloudLibrarySource
                     return importedGames;
                 }
 
+                var providerType = GetProviderType(pluginSettings);
+                diagnostics.Add($"provider={providerType}");
+                diagnostics.Add($"manifestPath={ResolveManifestDescription(pluginSettings)}");
+
                 var json = LoadManifestJson(pluginSettings);
                 var manifest = ParseManifest(json);
-                importedGames = ConvertManifestItemsToGameMetadata(manifest, pluginSettings);
+                diagnostics.Add($"itemCount={manifest.Items.Count}");
+                importedGames = ConvertManifestItemsToGameMetadata(manifest, pluginSettings, diagnostics);
+                diagnostics.Add($"returnedGameCount={importedGames.Count}");
             }
             catch (Exception ex)
             {
                 logger.Error(ex, "Personal Cloud Library Source failed to import the manifest.");
+                diagnostics.Add($"importError={ex.Message}");
             }
-
-            logger.Info($"Personal Cloud Library Source imported {importedGames.Count} manifest entries.");
-            return importedGames;
-        }
-
-        public override IEnumerable<Game> ImportGames(LibraryImportGamesArgs args)
-        {
-            var importedGames = new List<Game>();
-
-            try
+            finally
             {
-                var pluginSettings = settings.Settings;
-
-                if (pluginSettings == null || !pluginSettings.Enabled)
-                {
-                    logger.Info("Personal Cloud Library Source is disabled. No games imported.");
-                    return importedGames;
-                }
-
-                var json = LoadManifestJson(pluginSettings);
-                var manifest = ParseManifest(json);
-                importedGames = ConvertManifestItemsToGames(manifest, pluginSettings);
-            }
-            catch (Exception ex)
-            {
-                logger.Error(ex, "Personal Cloud Library Source failed to import the manifest.");
+                WriteImportDiagnostics(diagnostics);
             }
 
             logger.Info($"Personal Cloud Library Source imported {importedGames.Count} manifest entries.");
@@ -96,14 +80,27 @@ namespace PersonalCloudLibrarySource
             try
             {
                 var pluginSettings = settings.Settings;
-                if (args?.Game == null ||
-                    pluginSettings == null ||
-                    !pluginSettings.Enabled ||
-                    !pluginSettings.AllowRcloneDownloads ||
-                    !IsRcloneRemoteMode(pluginSettings) ||
-                    string.IsNullOrWhiteSpace(pluginSettings.RcloneRemoteName) ||
-                    args.Game.PluginId != Id)
+                if (args?.Game == null)
                 {
+                    logger.Info("Personal Cloud Library Source install action not returned: no game context.");
+                    return installActions;
+                }
+
+                if (pluginSettings == null || !pluginSettings.Enabled)
+                {
+                    logger.Info($"Personal Cloud Library Source install action not returned for {args.Game.GameId}: plugin disabled.");
+                    return installActions;
+                }
+
+                if (!pluginSettings.AllowDownloads)
+                {
+                    logger.Info($"Personal Cloud Library Source install action not returned for {args.Game.GameId}: downloads disabled.");
+                    return installActions;
+                }
+
+                if (args.Game.PluginId != Id)
+                {
+                    logger.Info($"Personal Cloud Library Source install action not returned for {args.Game.GameId}: game belongs to another plugin.");
                     return installActions;
                 }
 
@@ -118,9 +115,10 @@ namespace PersonalCloudLibrarySource
                         continue;
                     }
 
-                    if (string.IsNullOrWhiteSpace(item.RemotePath))
+                    var sourcePath = GetItemSourcePath(item);
+                    if (string.IsNullOrWhiteSpace(sourcePath))
                     {
-                        logger.Warn($"Personal Cloud Library Source item {item.Id} has no remotePath and cannot be downloaded.");
+                        logger.Warn($"Personal Cloud Library Source item {item.Id} has no sourcePath or legacy remotePath and cannot be downloaded.");
                         return installActions;
                     }
 
@@ -128,6 +126,13 @@ namespace PersonalCloudLibrarySource
                     var launchFileExists = !string.IsNullOrWhiteSpace(launchPath) && File.Exists(launchPath);
                     if (launchFileExists)
                     {
+                        logger.Info($"Personal Cloud Library Source install action not returned for {item.Id}: launch file already exists.");
+                        return installActions;
+                    }
+
+                    if (!CanResolveSourcePath(pluginSettings, sourcePath))
+                    {
+                        logger.Info($"Personal Cloud Library Source install action not returned for {item.Id}: provider cannot resolve sourcePath.");
                         return installActions;
                     }
 
@@ -135,9 +140,13 @@ namespace PersonalCloudLibrarySource
                         args.Game,
                         item,
                         pluginSettings,
-                        rcloneFileCopier));
+                        rcloneFileCopier,
+                        localFileCopier));
+                    logger.Info($"Personal Cloud Library Source install action returned for {item.Id}.");
                     return installActions;
                 }
+
+                logger.Info($"Personal Cloud Library Source install action not returned for {args.Game.GameId}: manifest item was not found.");
             }
             catch (Exception ex)
             {
@@ -147,35 +156,51 @@ namespace PersonalCloudLibrarySource
             return installActions;
         }
 
-        private static bool IsRcloneRemoteMode(PersonalCloudLibrarySourceSettings pluginSettings)
+        public static string GetProviderType(PersonalCloudLibrarySourceSettings pluginSettings)
         {
-            return string.Equals(
-                pluginSettings.ManifestSourceMode,
-                PersonalCloudLibrarySourceSettings.RcloneRemoteManifestSourceMode,
-                StringComparison.OrdinalIgnoreCase);
+            return string.IsNullOrWhiteSpace(pluginSettings.SourceProviderType)
+                ? PersonalCloudLibrarySourceSettings.LocalFileProviderType
+                : pluginSettings.SourceProviderType;
         }
 
         private string LoadManifestJson(PersonalCloudLibrarySourceSettings pluginSettings)
         {
-            var manifestSourceMode = string.IsNullOrWhiteSpace(pluginSettings.ManifestSourceMode)
-                ? PersonalCloudLibrarySourceSettings.LocalFileManifestSourceMode
-                : pluginSettings.ManifestSourceMode;
+            var sourceProviderType = GetProviderType(pluginSettings);
 
             if (string.Equals(
-                manifestSourceMode,
-                PersonalCloudLibrarySourceSettings.RcloneRemoteManifestSourceMode,
+                sourceProviderType,
+                PersonalCloudLibrarySourceSettings.RcloneRemoteProviderType,
                 StringComparison.OrdinalIgnoreCase))
             {
                 logger.Info("Personal Cloud Library Source loading manifest using rclone.");
                 return rcloneManifestReader.ReadManifestJson(pluginSettings);
             }
 
-            if (!string.Equals(
-                manifestSourceMode,
-                PersonalCloudLibrarySourceSettings.LocalFileManifestSourceMode,
+            if (string.Equals(
+                sourceProviderType,
+                PersonalCloudLibrarySourceSettings.LocalFolderProviderType,
                 StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidOperationException("Manifest source mode must be LocalFile or RcloneRemote.");
+                var localFolderManifestPath = ResolveLocalFolderManifestPath(pluginSettings);
+                if (string.IsNullOrWhiteSpace(localFolderManifestPath))
+                {
+                    throw new InvalidOperationException("Personal Cloud Library Source local folder manifest path could not be resolved.");
+                }
+
+                if (!File.Exists(localFolderManifestPath))
+                {
+                    throw new FileNotFoundException("Personal Cloud Library Source local folder manifest was not found.", localFolderManifestPath);
+                }
+
+                return File.ReadAllText(localFolderManifestPath);
+            }
+
+            if (!string.Equals(
+                sourceProviderType,
+                PersonalCloudLibrarySourceSettings.LocalFileProviderType,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Source provider type must be LocalFile, LocalFolder, or RcloneRemote.");
             }
 
             if (string.IsNullOrWhiteSpace(pluginSettings.LocalManifestPath))
@@ -198,6 +223,7 @@ namespace PersonalCloudLibrarySource
                 throw new InvalidOperationException("Personal Cloud Library Source manifest JSON was empty.");
             }
 
+            json = json.TrimStart('\uFEFF', '\u00EF', '\u00BB', '\u00BF');
             var manifest = Serialization.FromJson<PersonalCloudLibraryManifest>(json);
             if (manifest == null || manifest.Items == null)
             {
@@ -209,7 +235,8 @@ namespace PersonalCloudLibrarySource
 
         private static List<GameMetadata> ConvertManifestItemsToGameMetadata(
             PersonalCloudLibraryManifest manifest,
-            PersonalCloudLibrarySourceSettings pluginSettings)
+            PersonalCloudLibrarySourceSettings pluginSettings,
+            List<string> diagnostics)
         {
             var importedGames = new List<GameMetadata>();
             var importedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -218,32 +245,50 @@ namespace PersonalCloudLibrarySource
             {
                 if (item == null)
                 {
+                    diagnostics.Add("item=<null>; skipReason=null item");
                     continue;
                 }
 
                 if (string.IsNullOrWhiteSpace(item.Id) || string.IsNullOrWhiteSpace(item.Title))
                 {
                     logger.Warn("Skipped manifest item because it was missing an id or title.");
+                    diagnostics.Add($"itemId={item.Id}; title={item.Title}; skipReason=missing id or title");
                     continue;
                 }
 
                 if (!importedIds.Add(item.Id))
                 {
                     logger.Warn($"Skipped duplicate manifest item id: {item.Id}");
+                    diagnostics.Add($"itemId={item.Id}; title={item.Title}; skipReason=duplicate id");
                     continue;
                 }
 
                 var launchPath = ResolveLaunchPath(item, pluginSettings);
                 var installDirectory = ResolveInstallDirectory(item, pluginSettings, launchPath);
                 var launchFileExists = !string.IsNullOrWhiteSpace(launchPath) && File.Exists(launchPath);
+                var isInstalled = pluginSettings.TreatMissingFilesAsUninstalled ? launchFileExists : true;
+                var sourcePath = GetItemSourcePath(item);
+                var cachePath = ResolveDownloadDestinationFilePath(item, pluginSettings, launchPath);
+                var downloadEligible = !launchFileExists &&
+                    pluginSettings.AllowDownloads &&
+                    !string.IsNullOrWhiteSpace(sourcePath) &&
+                    CanResolveSourcePath(pluginSettings, sourcePath);
+                var playActionCount = launchFileExists ? 1 : 0;
+                var playActionName = launchFileExists ? "Play" : string.Empty;
+                var playActionPath = launchFileExists ? launchPath : string.Empty;
 
                 var game = new GameMetadata
                 {
                     GameId = item.Id,
                     Name = item.Title,
-                    IsInstalled = pluginSettings.TreatMissingFilesAsUninstalled ? launchFileExists : true,
+                    IsInstalled = isInstalled,
                     InstallDirectory = installDirectory
                 };
+
+                logger.Info(
+                    $"Personal Cloud Library Source item import: id={item.Id}; title={item.Title}; launchPath={launchPath}; fileExists={launchFileExists}; sourcePathPresent={!string.IsNullOrWhiteSpace(sourcePath)}; isInstalled={isInstalled}; downloadEligible={downloadEligible}; playActionCount={playActionCount}; playActionName={playActionName}; playActionPath={playActionPath}");
+                diagnostics.Add(
+                    $"itemId={item.Id}; title={item.Title}; sourcePath={sourcePath}; cachePath={cachePath}; localExists={launchFileExists}; isInstalled={isInstalled}; downloadEligible={downloadEligible}; playActionCount={playActionCount}; playActionName={playActionName}; playActionPath={playActionPath}; skipReason=");
 
                 if (!string.IsNullOrWhiteSpace(item.Notes))
                 {
@@ -256,66 +301,7 @@ namespace PersonalCloudLibrarySource
                     {
                         new GameAction
                         {
-                            Type = GameActionType.File,
-                            Path = launchPath,
-                            WorkingDir = installDirectory,
-                            IsPlayAction = true
-                        }
-                    };
-                }
-
-                importedGames.Add(game);
-            }
-
-            return importedGames;
-        }
-
-        private List<Game> ConvertManifestItemsToGames(
-            PersonalCloudLibraryManifest manifest,
-            PersonalCloudLibrarySourceSettings pluginSettings)
-        {
-            var importedGames = new List<Game>();
-            var importedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var item in manifest.Items)
-            {
-                if (item == null)
-                {
-                    continue;
-                }
-
-                if (string.IsNullOrWhiteSpace(item.Id) || string.IsNullOrWhiteSpace(item.Title))
-                {
-                    logger.Warn("Skipped manifest item because it was missing an id or title.");
-                    continue;
-                }
-
-                if (!importedIds.Add(item.Id))
-                {
-                    logger.Warn($"Skipped duplicate manifest item id: {item.Id}");
-                    continue;
-                }
-
-                var launchPath = ResolveLaunchPath(item, pluginSettings);
-                var installDirectory = ResolveInstallDirectory(item, pluginSettings, launchPath);
-                var launchFileExists = !string.IsNullOrWhiteSpace(launchPath) && File.Exists(launchPath);
-
-                var game = new Game(item.Title)
-                {
-                    GameId = item.Id,
-                    PluginId = Id,
-                    Description = item.Notes,
-                    IsInstalled = pluginSettings.TreatMissingFilesAsUninstalled ? launchFileExists : true,
-                    OverrideInstallState = true,
-                    InstallDirectory = installDirectory
-                };
-
-                if (launchFileExists)
-                {
-                    game.GameActions = new ObservableCollection<GameAction>
-                    {
-                        new GameAction
-                        {
+                            Name = "Play",
                             Type = GameActionType.File,
                             Path = launchPath,
                             WorkingDir = installDirectory,
@@ -417,7 +403,7 @@ namespace PersonalCloudLibrarySource
                 return launchPath;
             }
 
-            var remoteFileName = Path.GetFileName((item.RemotePath ?? string.Empty).Replace('/', Path.DirectorySeparatorChar));
+            var remoteFileName = Path.GetFileName((GetItemSourcePath(item) ?? string.Empty).Replace('/', Path.DirectorySeparatorChar));
             if (string.IsNullOrWhiteSpace(remoteFileName))
             {
                 remoteFileName = item.Id;
@@ -468,6 +454,131 @@ namespace PersonalCloudLibrarySource
             return string.Empty;
         }
 
+        public static string GetItemSourcePath(PersonalCloudLibraryItem item)
+        {
+            if (!string.IsNullOrWhiteSpace(item.SourcePath))
+            {
+                return item.SourcePath;
+            }
+
+            return item.RemotePath;
+        }
+
+        public static string ResolveLocalFolderSourcePath(
+            PersonalCloudLibrarySourceSettings pluginSettings,
+            string sourcePath)
+        {
+            if (string.IsNullOrWhiteSpace(sourcePath))
+            {
+                return string.Empty;
+            }
+
+            if (Path.IsPathRooted(sourcePath))
+            {
+                return sourcePath;
+            }
+
+            if (!string.IsNullOrWhiteSpace(pluginSettings.LocalLibraryRoot))
+            {
+                return Path.Combine(pluginSettings.LocalLibraryRoot, sourcePath);
+            }
+
+            if (!string.IsNullOrWhiteSpace(pluginSettings.LocalManifestPath))
+            {
+                var manifestFolder = Path.GetDirectoryName(pluginSettings.LocalManifestPath);
+                if (!string.IsNullOrWhiteSpace(manifestFolder))
+                {
+                    return Path.Combine(manifestFolder, sourcePath);
+                }
+            }
+
+            return string.Empty;
+        }
+
+        public static string ResolveRcloneSourcePath(
+            PersonalCloudLibrarySourceSettings pluginSettings,
+            string sourcePath)
+        {
+            if (string.IsNullOrWhiteSpace(sourcePath))
+            {
+                return string.Empty;
+            }
+
+            if (string.IsNullOrWhiteSpace(pluginSettings.RcloneContentRoot))
+            {
+                return sourcePath;
+            }
+
+            return CombineRemotePath(pluginSettings.RcloneContentRoot, sourcePath);
+        }
+
+        private static bool CanResolveSourcePath(PersonalCloudLibrarySourceSettings pluginSettings, string sourcePath)
+        {
+            var providerType = GetProviderType(pluginSettings);
+
+            if (string.Equals(providerType, PersonalCloudLibrarySourceSettings.RcloneRemoteProviderType, StringComparison.OrdinalIgnoreCase))
+            {
+                return !string.IsNullOrWhiteSpace(pluginSettings.RcloneRemoteName) &&
+                    !string.IsNullOrWhiteSpace(ResolveRcloneSourcePath(pluginSettings, sourcePath));
+            }
+
+            if (string.Equals(providerType, PersonalCloudLibrarySourceSettings.LocalFolderProviderType, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(providerType, PersonalCloudLibrarySourceSettings.LocalFileProviderType, StringComparison.OrdinalIgnoreCase))
+            {
+                return !string.IsNullOrWhiteSpace(ResolveLocalFolderSourcePath(pluginSettings, sourcePath));
+            }
+
+            return false;
+        }
+
+        private static string ResolveLocalFolderManifestPath(PersonalCloudLibrarySourceSettings pluginSettings)
+        {
+            if (string.IsNullOrWhiteSpace(pluginSettings.LocalLibraryRoot) ||
+                string.IsNullOrWhiteSpace(pluginSettings.ManifestRelativePath))
+            {
+                return string.Empty;
+            }
+
+            return Path.Combine(pluginSettings.LocalLibraryRoot, pluginSettings.ManifestRelativePath);
+        }
+
+        private static string CombineRemotePath(string root, string relativePath)
+        {
+            return root.TrimEnd('/', '\\') + "/" + relativePath.TrimStart('/', '\\');
+        }
+
+        private static string ResolveManifestDescription(PersonalCloudLibrarySourceSettings pluginSettings)
+        {
+            var providerType = GetProviderType(pluginSettings);
+
+            if (string.Equals(providerType, PersonalCloudLibrarySourceSettings.RcloneRemoteProviderType, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"{pluginSettings.RcloneRemoteName}:{pluginSettings.RcloneManifestPath}";
+            }
+
+            if (string.Equals(providerType, PersonalCloudLibrarySourceSettings.LocalFolderProviderType, StringComparison.OrdinalIgnoreCase))
+            {
+                return ResolveLocalFolderManifestPath(pluginSettings);
+            }
+
+            return pluginSettings.LocalManifestPath;
+        }
+
+        private static void WriteImportDiagnostics(List<string> diagnostics)
+        {
+            try
+            {
+                var diagnosticsDirectory = @"D:\PersonalCloudLibrarySource\diagnostics";
+                Directory.CreateDirectory(diagnosticsDirectory);
+                var diagnosticsPath = Path.Combine(diagnosticsDirectory, "last-import-diagnostics.txt");
+                File.WriteAllLines(diagnosticsPath, diagnostics);
+            }
+            catch (Exception ex)
+            {
+                logger.Warn(ex, "Personal Cloud Library Source could not write import diagnostics.");
+            }
+        }
+
         public override ISettings GetSettings(bool firstRunSettings)
         {
             return settings;
@@ -493,6 +604,7 @@ namespace PersonalCloudLibrarySource
         public string LocalPath { get; set; }
         public string InstallDirectory { get; set; }
         public string LaunchFile { get; set; }
+        public string SourcePath { get; set; }
         public string RemotePath { get; set; }
         public string Notes { get; set; }
     }

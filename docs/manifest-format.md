@@ -1,6 +1,6 @@
 # Manifest Format
 
-MVP 0 reads a local JSON manifest with this structure. Phase 2A can read the same JSON format from an existing rclone remote.
+Personal Cloud Library Source reads a JSON manifest with this structure:
 
 ```json
 {
@@ -13,7 +13,7 @@ MVP 0 reads a local JSON manifest with this structure. Phase 2A can read the sam
       "localPath": "ExampleAdventure\\ExampleAdventure.bat",
       "installDirectory": "ExampleAdventure",
       "launchFile": "ExampleAdventure.bat",
-      "remotePath": "PersonalLibrary/files/ExampleAdventure/ExampleAdventure.bat",
+      "sourcePath": "ExampleAdventure/ExampleAdventure.bat",
       "notes": "Fake local sample entry for testing."
     }
   ]
@@ -27,14 +27,19 @@ MVP 0 reads a local JSON manifest with this structure. Phase 2A can read the sam
 - `id`: Stable item identifier. Keep this value stable between imports so Playnite can recognize the same entry.
 - `title`: Display name shown in Playnite.
 - `platform`: Optional platform label for the entry.
-- `localPath`: Launch file path. It can be absolute or relative to `LocalCacheFolder`.
-- `installDirectory`: Directory for the entry. It can be absolute or relative to `LocalCacheFolder`.
+- `localPath`: Cached launch file path. It can be absolute or relative to `LocalCacheFolder`.
+- `installDirectory`: Cached install directory. It can be absolute or relative to `LocalCacheFolder`.
 - `launchFile`: Launch file name used with `installDirectory` when `localPath` is not supplied.
-- `remotePath`: Optional path inside the configured rclone remote. If empty, the item can still import but cannot be downloaded by rclone.
+- `sourcePath`: Optional provider source path used for install/download actions.
+- `remotePath`: Legacy fallback for `sourcePath`. New manifests should prefer `sourcePath`.
 - `notes`: Optional text imported as the Playnite description.
 
-When `TreatMissingFilesAsUninstalled` is true, entries with missing launch files are imported as uninstalled.
+## Provider Path Behavior
 
-The manifest format is the same whether `ManifestSourceMode` is `LocalFile` or `RcloneRemote`.
+`LocalFile` reads `LocalManifestPath`. If downloads are used, `sourcePath` can be absolute or relative to the manifest folder.
 
-Phase 2B does not auto-download before launch. It can expose a Playnite install action that runs `rclone copyto` for a selected item with `remotePath`.
+`LocalFolder` reads `LocalLibraryRoot + ManifestRelativePath` and copies files from `LocalLibraryRoot + sourcePath`.
+
+`RcloneRemote` reads the manifest with `rclone cat RcloneRemoteName:RcloneManifestPath`. Downloads use `rclone copyto RcloneRemoteName:RcloneContentRoot/sourcePath localCachePath`. If `RcloneContentRoot` is empty, `sourcePath` is used directly.
+
+When `TreatMissingFilesAsUninstalled` is true, entries with missing cached launch files are imported as uninstalled. The plugin does not auto-download before launch.

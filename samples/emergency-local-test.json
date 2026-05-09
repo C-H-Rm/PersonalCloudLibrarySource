@@ -1,4 +1,6 @@
-﻿{
+{
+  "sampleType": "developer-test",
+  "notes": "Developer-only emergency import test manifest using fake launcher data.",
   "version": 1,
   "items": [
     {

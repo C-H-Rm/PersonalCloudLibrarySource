@@ -8,19 +8,25 @@ namespace PersonalCloudLibrarySource
 {
     public class PersonalCloudLibrarySourceSettings : ObservableObject
     {
-        public const string LocalFileManifestSourceMode = "LocalFile";
-        public const string RcloneRemoteManifestSourceMode = "RcloneRemote";
+        public const string LocalFileProviderType = "LocalFile";
+        public const string LocalFolderProviderType = "LocalFolder";
+        public const string RcloneRemoteProviderType = "RcloneRemote";
+        public const string LocalFileManifestSourceMode = LocalFileProviderType;
+        public const string RcloneRemoteManifestSourceMode = RcloneRemoteProviderType;
 
         private bool enabled = true;
-        private string manifestSourceMode = LocalFileManifestSourceMode;
+        private string sourceProviderType = LocalFileProviderType;
         private string localManifestPath = string.Empty;
+        private string localLibraryRoot = string.Empty;
+        private string manifestRelativePath = string.Empty;
         private string localCacheFolder = string.Empty;
         private bool treatMissingFilesAsUninstalled = true;
         private string rcloneExecutablePath = "rclone";
         private string rcloneRemoteName = string.Empty;
         private string rcloneManifestPath = string.Empty;
+        private string rcloneContentRoot = string.Empty;
         private int rcloneTimeoutSeconds = 30;
-        private bool allowRcloneDownloads = true;
+        private bool allowDownloads = true;
 
         public bool Enabled
         {
@@ -28,16 +34,34 @@ namespace PersonalCloudLibrarySource
             set => SetValue(ref enabled, value);
         }
 
+        public string SourceProviderType
+        {
+            get => sourceProviderType;
+            set => SetValue(ref sourceProviderType, value);
+        }
+
         public string ManifestSourceMode
         {
-            get => manifestSourceMode;
-            set => SetValue(ref manifestSourceMode, value);
+            get => SourceProviderType;
+            set => SourceProviderType = value;
         }
 
         public string LocalManifestPath
         {
             get => localManifestPath;
             set => SetValue(ref localManifestPath, value);
+        }
+
+        public string LocalLibraryRoot
+        {
+            get => localLibraryRoot;
+            set => SetValue(ref localLibraryRoot, value);
+        }
+
+        public string ManifestRelativePath
+        {
+            get => manifestRelativePath;
+            set => SetValue(ref manifestRelativePath, value);
         }
 
         public string LocalCacheFolder
@@ -70,16 +94,28 @@ namespace PersonalCloudLibrarySource
             set => SetValue(ref rcloneManifestPath, value);
         }
 
+        public string RcloneContentRoot
+        {
+            get => rcloneContentRoot;
+            set => SetValue(ref rcloneContentRoot, value);
+        }
+
         public int RcloneTimeoutSeconds
         {
             get => rcloneTimeoutSeconds;
             set => SetValue(ref rcloneTimeoutSeconds, value);
         }
 
+        public bool AllowDownloads
+        {
+            get => allowDownloads;
+            set => SetValue(ref allowDownloads, value);
+        }
+
         public bool AllowRcloneDownloads
         {
-            get => allowRcloneDownloads;
-            set => SetValue(ref allowRcloneDownloads, value);
+            get => AllowDownloads;
+            set => AllowDownloads = value;
         }
     }
 
@@ -125,13 +161,13 @@ namespace PersonalCloudLibrarySource
         public bool VerifySettings(out List<string> errors)
         {
             errors = new List<string>();
-            var manifestSourceMode = string.IsNullOrWhiteSpace(Settings.ManifestSourceMode)
-                ? PersonalCloudLibrarySourceSettings.LocalFileManifestSourceMode
-                : Settings.ManifestSourceMode;
+            var sourceProviderType = string.IsNullOrWhiteSpace(Settings.SourceProviderType)
+                ? PersonalCloudLibrarySourceSettings.LocalFileProviderType
+                : Settings.SourceProviderType;
 
             if (string.Equals(
-                manifestSourceMode,
-                PersonalCloudLibrarySourceSettings.LocalFileManifestSourceMode,
+                sourceProviderType,
+                PersonalCloudLibrarySourceSettings.LocalFileProviderType,
                 StringComparison.OrdinalIgnoreCase))
             {
                 if (!string.IsNullOrWhiteSpace(Settings.LocalManifestPath) &&
@@ -141,8 +177,27 @@ namespace PersonalCloudLibrarySource
                 }
             }
             else if (string.Equals(
-                manifestSourceMode,
-                PersonalCloudLibrarySourceSettings.RcloneRemoteManifestSourceMode,
+                sourceProviderType,
+                PersonalCloudLibrarySourceSettings.LocalFolderProviderType,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(Settings.LocalLibraryRoot))
+                {
+                    errors.Add("The local library root is required for LocalFolder mode.");
+                }
+                else if (!Directory.Exists(Settings.LocalLibraryRoot))
+                {
+                    errors.Add("The local library root does not exist.");
+                }
+
+                if (string.IsNullOrWhiteSpace(Settings.ManifestRelativePath))
+                {
+                    errors.Add("The manifest relative path is required for LocalFolder mode.");
+                }
+            }
+            else if (string.Equals(
+                sourceProviderType,
+                PersonalCloudLibrarySourceSettings.RcloneRemoteProviderType,
                 StringComparison.OrdinalIgnoreCase))
             {
                 if (string.IsNullOrWhiteSpace(Settings.RcloneExecutablePath))
@@ -167,7 +222,7 @@ namespace PersonalCloudLibrarySource
             }
             else
             {
-                errors.Add("Manifest source mode must be LocalFile or RcloneRemote.");
+                errors.Add("Source provider type must be LocalFile, LocalFolder, or RcloneRemote.");
             }
 
             if (!string.IsNullOrWhiteSpace(Settings.LocalCacheFolder) &&
