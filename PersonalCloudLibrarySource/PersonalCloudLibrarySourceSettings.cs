@@ -20,6 +20,7 @@ namespace PersonalCloudLibrarySource
         private string rcloneRemoteName = string.Empty;
         private string rcloneManifestPath = string.Empty;
         private int rcloneTimeoutSeconds = 30;
+        private bool allowRcloneDownloads = true;
 
         public bool Enabled
         {
@@ -73,6 +74,12 @@ namespace PersonalCloudLibrarySource
         {
             get => rcloneTimeoutSeconds;
             set => SetValue(ref rcloneTimeoutSeconds, value);
+        }
+
+        public bool AllowRcloneDownloads
+        {
+            get => allowRcloneDownloads;
+            set => SetValue(ref allowRcloneDownloads, value);
         }
     }
 

@@ -106,7 +106,7 @@ namespace PersonalCloudLibrarySource
             }
         }
 
-        private static string QuoteArgument(string value)
+        internal static string QuoteArgument(string value)
         {
             if (string.IsNullOrEmpty(value))
             {
@@ -116,7 +116,7 @@ namespace PersonalCloudLibrarySource
             return "\"" + value.Replace("\"", "\\\"") + "\"";
         }
 
-        private static string TrimForLog(string value)
+        internal static string TrimForLog(string value)
         {
             if (string.IsNullOrWhiteSpace(value))
             {
@@ -127,4 +127,5 @@ namespace PersonalCloudLibrarySource
             return trimmed.Length <= 500 ? trimmed : trimmed.Substring(0, 500);
         }
     }
+
 }

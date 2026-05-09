@@ -1,0 +1,14 @@
+﻿{
+  "version": 1,
+  "items": [
+    {
+      "id": "emergency-local-test-001",
+      "title": "Emergency Local Test 001",
+      "platform": "Homebrew",
+      "localPath": "EmergencyLocalTest\\EmergencyLocalTest.bat",
+      "installDirectory": "EmergencyLocalTest",
+      "launchFile": "EmergencyLocalTest.bat",
+      "notes": "Emergency test entry to verify the plugin is importing from a local manifest."
+    }
+  ]
+}

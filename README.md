@@ -10,7 +10,7 @@ MVP 0: local JSON manifest import works.
 
 Personal Cloud Library Source reads a local JSON manifest, imports entries into Playnite, and launches local files if they exist.
 
-Phase 2A also supports reading the same manifest JSON through an existing rclone remote by running `rclone cat`.
+Phase 2A also supports reading the same manifest JSON through an existing rclone remote by running `rclone cat`. Phase 2B can copy a selected missing item from the configured rclone remote into the local cache.
 
 ## What It Does Not Do
 
@@ -40,7 +40,7 @@ This plugin does not provide games, ROMs, BIOS files, cracks, keys, copyrighted 
 
 `LocalFile` remains the default manifest source mode.
 
-`RcloneRemote` mode requires the user to configure rclone separately before using the plugin. The plugin does not authenticate to Google Drive directly, does not store OAuth credentials, and does not download game files in this phase.
+`RcloneRemote` mode requires the user to configure rclone separately before using the plugin. The plugin does not authenticate to Google Drive directly and does not store OAuth credentials. Manifest retrieval only reads JSON with `rclone cat`.
 
 Example settings:
 
@@ -53,6 +53,18 @@ RcloneTimeoutSeconds = 30
 LocalCacheFolder = D:\PersonalCloudLibraryCache
 ```
 
+## Phase 2B Rclone Item Copy
+
+Manifest items can include an optional `remotePath`. If an item is missing locally and `AllowRcloneDownloads` is enabled, Playnite can expose a `Download to local cache` install action for that item.
+
+This phase does not auto-download before launch. It only copies a selected item from the user's configured rclone remote into the local cache. The plugin does not provide content; it only copies files from the remote configured by the user.
+
+Manual rclone test command:
+
+```text
+rclone copyto my_remote:PersonalLibrary/files/ExampleAdventure/ExampleAdventure.bat D:\PersonalCloudLibraryCache\ExampleAdventure\ExampleAdventure.bat
+```
+
 ## Expected Sample Entries
 
 - Example Adventure
@@ -61,7 +73,7 @@ LocalCacheFolder = D:\PersonalCloudLibraryCache
 
 ## Manifest Format
 
-The manifest is a JSON file with a top-level `version` and an `items` array. It can be loaded from a local file or fetched from an rclone remote. Each item can define a stable `id`, a display `title`, optional `platform`, path fields for launch resolution, and optional `notes`.
+The manifest is a JSON file with a top-level `version` and an `items` array. It can be loaded from a local file or fetched from an rclone remote. Each item can define a stable `id`, a display `title`, optional `platform`, path fields for launch resolution, optional `remotePath`, and optional `notes`.
 
 See [docs/manifest-format.md](docs/manifest-format.md) for the current MVP 0 field reference.
 

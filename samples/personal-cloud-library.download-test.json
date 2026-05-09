@@ -2,14 +2,14 @@
   "version": 1,
   "items": [
     {
-      "id": "example-adventure",
-      "title": "Example Adventure",
-      "platform": "Example Platform",
-      "localPath": "ExampleAdventure\\ExampleAdventure.bat",
-      "installDirectory": "ExampleAdventure",
+      "id": "example-adventure-download-test",
+      "title": "Example Adventure Download Test",
+      "platform": "Homebrew",
+      "localPath": "ExampleAdventureDownloadTest\\ExampleAdventure.bat",
+      "installDirectory": "ExampleAdventureDownloadTest",
       "launchFile": "ExampleAdventure.bat",
       "remotePath": "PersonalLibrary/files/ExampleAdventure/ExampleAdventure.bat",
-      "notes": "Fake local sample entry for testing. No game content is included."
+      "notes": "Temporary Phase 2B download test entry. This uses a fake batch file only."
     },
     {
       "id": "example-puzzle-pack",
