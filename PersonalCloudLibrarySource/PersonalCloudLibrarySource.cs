@@ -66,6 +66,8 @@ namespace PersonalCloudLibrarySource
                     return importedGames;
                 }
 
+                var importedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
                 foreach (var item in manifest.Items)
                 {
                     if (item == null)
@@ -76,6 +78,12 @@ namespace PersonalCloudLibrarySource
                     if (string.IsNullOrWhiteSpace(item.Id) || string.IsNullOrWhiteSpace(item.Title))
                     {
                         logger.Warn("Skipped manifest item because it was missing an id or title.");
+                        continue;
+                    }
+
+                    if (!importedIds.Add(item.Id))
+                    {
+                        logger.Warn($"Skipped duplicate manifest item id: {item.Id}");
                         continue;
                     }
 
