@@ -20,7 +20,25 @@
 
             <CheckBox Content="Enable this library source"
                       IsChecked="{Binding Settings.Enabled}"
-                      Margin="0,0,0,16"/>
+                      Margin="0,0,0,10"/>
+
+            <TextBlock Text="Library display name:"
+                       FontWeight="SemiBold"
+                       Margin="0,0,0,4"/>
+
+            <TextBox Text="{Binding Settings.LibraryDisplayName, UpdateSourceTrigger=PropertyChanged}"
+                     MinWidth="540"
+                     Margin="0,0,0,6"/>
+
+            <TextBlock Text="This changes the library name shown inside Playnite. The add-on package name remains Personal Cloud Library Source."
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,4"/>
+
+            <TextBlock Text="Example: My Cloud Library"
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,16"/>
 
             <TextBlock Text="Provider"
                        FontSize="15"
@@ -34,6 +52,11 @@
             <TextBox Text="{Binding Settings.SourceProviderType, UpdateSourceTrigger=PropertyChanged}"
                      MinWidth="540"
                      Margin="0,0,0,6"/>
+
+            <TextBlock Text="LocalFile reads one manifest JSON file. LocalFolder supports local folders, external drives, mapped drives, and NAS. RcloneRemote supports Google Drive, OneDrive, Dropbox, and other rclone remotes."
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,4"/>
 
             <TextBlock Text="Examples: LocalFile, LocalFolder, RcloneRemote"
                        Opacity="0.7"
@@ -53,6 +76,11 @@
                      MinWidth="540"
                      Margin="0,0,0,6"/>
 
+            <TextBlock Text="Used by LocalFile mode. Point this at one manifest JSON file on your computer."
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,4"/>
+
             <TextBlock Text="LocalFile example: D:\PersonalCloudLibrarySource\samples\personal-cloud-library.sample.json"
                        Opacity="0.7"
                        TextWrapping="Wrap"
@@ -66,7 +94,12 @@
                      MinWidth="540"
                      Margin="0,0,0,6"/>
 
-            <TextBlock Text="LocalFolder examples: E:\PersonalLibrary, \\NAS\PersonalLibrary"
+            <TextBlock Text="Used by LocalFolder mode. This is the root folder that contains your manifest and source files."
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,4"/>
+
+            <TextBlock Text="Examples: E:\PersonalLibrary, Z:\PersonalLibrary, \\NAS\PersonalLibrary"
                        Opacity="0.7"
                        TextWrapping="Wrap"
                        Margin="0,0,0,14"/>
@@ -78,6 +111,11 @@
             <TextBox Text="{Binding Settings.ManifestRelativePath, UpdateSourceTrigger=PropertyChanged}"
                      MinWidth="540"
                      Margin="0,0,0,6"/>
+
+            <TextBlock Text="Used by LocalFolder mode. This is the manifest path relative to Local library root."
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,4"/>
 
             <TextBlock Text="Example: personal-cloud-library.sample.json"
                        Opacity="0.7"
@@ -97,6 +135,11 @@
                      MinWidth="540"
                      Margin="0,0,0,6"/>
 
+            <TextBlock Text="Used by RcloneRemote mode. Use rclone if it is on PATH, otherwise use the full path to rclone.exe."
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,4"/>
+
             <TextBlock Text="Examples: rclone, D:\Tools\rclone\rclone.exe"
                        Opacity="0.7"
                        TextWrapping="Wrap"
@@ -109,6 +152,11 @@
             <TextBox Text="{Binding Settings.RcloneRemoteName, UpdateSourceTrigger=PropertyChanged}"
                      MinWidth="540"
                      Margin="0,0,0,6"/>
+
+            <TextBlock Text="Used by RcloneRemote mode. This must match a remote name created with rclone config."
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,4"/>
 
             <TextBlock Text="Examples: google_drive, onedrive, dropbox"
                        Opacity="0.7"
@@ -123,6 +171,11 @@
                      MinWidth="540"
                      Margin="0,0,0,6"/>
 
+            <TextBlock Text="Used by RcloneRemote mode. This is the manifest JSON path inside the selected rclone remote."
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,4"/>
+
             <TextBlock Text="Example: PersonalLibrary/personal-cloud-library.sample.json"
                        Opacity="0.7"
                        TextWrapping="Wrap"
@@ -136,7 +189,12 @@
                      MinWidth="540"
                      Margin="0,0,0,6"/>
 
-            <TextBlock Text="Optional example: PersonalLibrary/files"
+            <TextBlock Text="Optional. If set, item sourcePath values are resolved inside this remote folder."
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,4"/>
+
+            <TextBlock Text="Example: PersonalLibrary/files"
                        Opacity="0.7"
                        TextWrapping="Wrap"
                        Margin="0,0,0,14"/>
@@ -147,7 +205,12 @@
 
             <TextBox Text="{Binding Settings.RcloneTimeoutSeconds, UpdateSourceTrigger=PropertyChanged}"
                      MinWidth="120"
-                     Margin="0,0,0,14"/>
+                     Margin="0,0,0,6"/>
+
+            <TextBlock Text="Maximum time to wait for rclone manifest and copy commands. Use 5 to 300 seconds."
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,14"/>
 
             <TextBlock Text="Cache and Import Behavior"
                        FontSize="15"
@@ -162,6 +225,11 @@
                      MinWidth="540"
                      Margin="0,0,0,6"/>
 
+            <TextBlock Text="Files are copied or downloaded here before Playnite launches them. Cloud-only entries appear as uninstalled until cached or downloaded."
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,4"/>
+
             <TextBlock Text="Example: D:\PersonalCloudLibraryCache"
                        Opacity="0.7"
                        TextWrapping="Wrap"
@@ -169,11 +237,100 @@
 
             <CheckBox Content="Allow downloads to local cache"
                       IsChecked="{Binding Settings.AllowDownloads}"
-                      Margin="0,0,0,10"/>
+                      Margin="0,0,0,4"/>
+
+            <TextBlock Text="Shows Download to local cache for missing entries when the provider can resolve sourcePath. It does not auto-download before launch."
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="22,0,0,10"/>
 
             <CheckBox Content="Treat missing files as uninstalled"
                       IsChecked="{Binding Settings.TreatMissingFilesAsUninstalled}"
-                      Margin="0,0,0,16"/>
+                      Margin="0,0,0,4"/>
+
+            <TextBlock Text="When enabled, entries import as uninstalled if the cached launch file does not exist."
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="22,0,0,10"/>
+
+            <CheckBox Content="Enable import diagnostics"
+                      IsChecked="{Binding Settings.EnableDiagnostics}"
+                      Margin="0,0,0,4"/>
+
+            <TextBlock Text="Writes last-import-diagnostics.txt to the plugin user-data diagnostics folder to help troubleshoot imports."
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="22,0,0,16"/>
+
+            <TextBlock Text="Tools"
+                       FontSize="15"
+                       FontWeight="Bold"
+                       Margin="0,0,0,10"/>
+
+            <TextBlock Text="Use these checks to verify rclone, validate the current manifest, open working folders, or create a fake sample manifest."
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,8"/>
+
+            <WrapPanel Margin="0,0,0,16">
+                <Button Content="Test rclone connection"
+                        Click="TestRcloneConnection_Click"
+                        Margin="0,0,8,8"
+                        Padding="10,4"/>
+                <Button Content="Test manifest load"
+                        Click="TestManifestLoad_Click"
+                        Margin="0,0,8,8"
+                        Padding="10,4"/>
+                <Button Content="Open cache folder"
+                        Click="OpenCacheFolder_Click"
+                        Margin="0,0,8,8"
+                        Padding="10,4"/>
+                <Button Content="Open diagnostics folder"
+                        Click="OpenDiagnosticsFolder_Click"
+                        Margin="0,0,8,8"
+                        Padding="10,4"/>
+                <Button Content="Create sample manifest"
+                        Click="CreateSampleManifest_Click"
+                        Margin="0,0,8,8"
+                        Padding="10,4"/>
+            </WrapPanel>
+
+            <TextBlock Text="Test rclone connection runs rclone listremotes. Test manifest load reads the current provider manifest. Open cache folder and Open diagnostics folder open local folders. Create sample manifest writes a fake sample manifest in plugin user data."
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,16"/>
+
+            <TextBlock Text="Uninstall / Cache Cleanup"
+                       FontSize="15"
+                       FontWeight="Bold"
+                       Margin="0,0,0,10"/>
+
+            <TextBlock Text="Uninstall behavior:"
+                       FontWeight="SemiBold"
+                       Margin="0,0,0,4"/>
+
+            <TextBox Text="{Binding Settings.UninstallBehavior, UpdateSourceTrigger=PropertyChanged}"
+                     MinWidth="540"
+                     Margin="0,0,0,6"/>
+
+            <TextBlock Text="Examples: RemoveCachedFileOnly, RemoveCachedInstallFolder, AskEachTime"
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,4"/>
+
+            <TextBlock Text="Uninstall removes local cached files only. It does not remove the manifest entry, Playnite metadata, or anything from your cloud/source provider."
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,10"/>
+
+            <CheckBox Content="Allow uninstall outside cache folder"
+                      IsChecked="{Binding Settings.AllowUninstallOutsideCacheFolder}"
+                      Margin="0,0,0,4"/>
+
+            <TextBlock Text="Leave this off unless you intentionally use absolute cache paths. When off, uninstall refuses paths outside LocalCacheFolder."
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Margin="22,0,0,16"/>
 
             <Border BorderBrush="#666666"
                     BorderThickness="1"

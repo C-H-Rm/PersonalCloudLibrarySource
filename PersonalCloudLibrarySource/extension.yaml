@@ -1,7 +1,16 @@
 Id: PersonalCloudLibrarySource_61993828-67a8-4468-93a2-293442e36328
 Name: Personal Cloud Library Source
 Author: "The Bearclaw & ztwslayer"
-Version: 0.1.1-dev
+Version: 0.1.1
 Module: PersonalCloudLibrarySource.dll
 Type: GameLibrary
 Icon: icon.png
+Links:
+  - Name: GitHub
+    Url: https://github.com/KurtusCobain/PersonalCloudLibrarySource
+  - Name: Documentation
+    Url: https://github.com/KurtusCobain/PersonalCloudLibrarySource/tree/main/docs
+  - Name: Issues
+    Url: https://github.com/KurtusCobain/PersonalCloudLibrarySource/issues
+  - Name: Changelog
+    Url: https://github.com/KurtusCobain/PersonalCloudLibrarySource/blob/main/CHANGELOG.md

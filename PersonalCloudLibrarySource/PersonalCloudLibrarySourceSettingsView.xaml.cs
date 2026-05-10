@@ -1,17 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
 
 namespace PersonalCloudLibrarySource
 {
@@ -20,6 +8,33 @@ namespace PersonalCloudLibrarySource
         public PersonalCloudLibrarySourceSettingsView()
         {
             InitializeComponent();
+        }
+
+        private PersonalCloudLibrarySourceSettingsViewModel ViewModel => DataContext as PersonalCloudLibrarySourceSettingsViewModel;
+
+        private void TestRcloneConnection_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.TestRcloneConnection();
+        }
+
+        private void TestManifestLoad_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.TestManifestLoad();
+        }
+
+        private void OpenCacheFolder_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.OpenCacheFolder();
+        }
+
+        private void OpenDiagnosticsFolder_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.OpenDiagnosticsFolder();
+        }
+
+        private void CreateSampleManifest_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateSampleManifest();
         }
     }
 }

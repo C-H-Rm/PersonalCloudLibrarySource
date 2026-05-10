@@ -4,5 +4,10 @@ obj/
 *.user
 *.suo
 *.pdb
+*.dll
+*.pext
 *.cache
+*.tmp
 TestResults/
+diagnostics/
+dist/

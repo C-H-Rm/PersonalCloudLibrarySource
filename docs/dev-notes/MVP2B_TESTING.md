@@ -39,7 +39,7 @@ Repeat for the other fake sample entries if needed.
 Test outside Playnite first:
 
 ```text
-rclone cat romcade_drive:PersonalLibrary/files/ExampleAdventure/ExampleAdventure.bat
+rclone cat my_remote:PersonalLibrary/files/ExampleAdventure/ExampleAdventure.bat
 ```
 
 To simulate a missing local file:

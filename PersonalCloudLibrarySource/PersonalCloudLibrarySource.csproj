@@ -55,6 +55,7 @@
     <Compile Include="PersonalCloudLibrarySourceSettingsView.xaml.cs">
       <DependentUpon>PersonalCloudLibrarySourceSettingsView.xaml</DependentUpon>
     </Compile>
+    <Compile Include="PersonalCloudLibraryUninstallController.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="RcloneFileCopier.cs" />
     <Compile Include="RcloneInstallController.cs" />

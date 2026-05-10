@@ -1,27 +1,59 @@
 # Personal Cloud Library Source
 
-A Playnite library plugin that imports user-supplied personal library entries into Playnite's normal library view.
+![Personal Cloud Library Source workflow](docs/images/pcls-workflow.png)
 
-## Current Status
+Personal Cloud Library Source imports a user-supplied cloud, NAS, external-drive, or local manifest into Playnite's normal library view. Cloud-only entries can appear before download, be enriched with Playnite metadata, downloaded/copied to a local cache when needed, launched locally, and later uninstalled from cache while keeping the catalog entry.
 
-Personal Cloud Library Source supports provider-based manifest import from a local JSON file, a local folder or mounted drive, and generic rclone remotes.
+## Overview
 
-## What It Does
+The plugin catalogs user-supplied entries and copies/downloads user-owned files from configured local folders or rclone remotes.
 
-- Reads a JSON manifest and imports every valid entry into Playnite.
-- Shows cached/local entries as installed with a Play action.
-- Shows cloud-only or missing entries as uninstalled.
-- Exposes `Download to local cache` when the provider can copy the entry source file.
-- Supports Google Drive, OneDrive, Dropbox, and similar providers through the user's existing rclone setup.
-- Supports local folders, external drives, mounted drives, and NAS folders directly without rclone.
+## How This Works
 
-## What It Does Not Do
+![Personal Cloud Library Source workflow](docs/images/pcls-workflow.png)
 
-This plugin does not provide games, ROMs, BIOS files, cracks, keys, copyrighted artwork, download links, scraping, or copyrighted content. Users are responsible for only using files they own or have rights to use.
+Personal Cloud Library Source lets users keep a record of their personal cloud/local library inside Playnite. Entries can appear before they are downloaded, so the library can be organized first and cached later.
 
-The plugin does not authenticate to Google Drive or OneDrive directly, does not store OAuth credentials, and does not auto-download before launch.
+This supports a download/cache workflow: import entries, enrich them in Playnite, download or copy selected items to a local cache when ready, then launch them locally through Playnite.
 
-## Setup
+This is not a gameplay streaming service. It does not provide games, ROMs, BIOS files, cracks, keys, copyrighted content, scraping, or download sources. It catalogs user-supplied entries and copies/downloads user-owned files from configured local folders or rclone remotes.
+
+## Features
+
+- Normal Playnite `GameLibrary` integration.
+- Provider modes for `LocalFile`, `LocalFolder`, and `RcloneRemote`.
+- Local folder, external drive, mounted drive, and NAS support.
+- Google Drive, OneDrive, Dropbox, and other cloud providers through rclone.
+- Cloud-only entries imported as uninstalled.
+- Cached entries imported as installed with a Play action.
+- Manual `Download to local cache` action when a provider can resolve `sourcePath`.
+- Manual `Remove cached copy` action for installed/cached entries.
+- Optional import diagnostics.
+- Customizable library display name inside Playnite.
+
+## Playnite Metadata
+
+Imported entries behave like normal Playnite library entries. After import, users can use Playnite's existing metadata download tools and metadata providers to add covers, descriptions, genres, screenshots, and other details.
+
+Metadata can be prepared before downloading or installing the actual file, as long as the entry exists in Playnite. Cached or downloaded entries can then launch normally.
+
+## What This Plugin Does Not Provide
+
+This is not a gameplay streaming service. It does not provide games, ROMs, BIOS files, cracks, keys, copyrighted content, scraping, or download sources. It catalogs user-supplied entries and copies/downloads user-owned files from configured local folders or rclone remotes.
+
+## Installation for Users
+
+1. Download the packaged `.pext` release from GitHub.
+2. Install the package in Playnite.
+3. Restart Playnite.
+4. Open plugin settings and choose a provider mode.
+5. Run `Update Game Library`.
+
+![Provider settings example](docs/images/pcls-settings-provider.png)
+
+The provider settings choose where the manifest is read from. The cache settings choose where files are downloaded/copied before Playnite launches them.
+
+## Building From Source for Developers
 
 1. Build Debug Any CPU.
 2. Add this folder as a Playnite external extension:
@@ -31,25 +63,80 @@ The plugin does not authenticate to Google Drive or OneDrive directly, does not 
    ```
 
 3. Restart Playnite.
-4. Configure one provider:
+4. Configure a test manifest and run `Update Game Library`.
 
-   ```text
-   SourceProviderType = LocalFile
-   LocalManifestPath = D:\PersonalCloudLibrarySource\samples\personal-cloud-library.sample.json
-   LocalCacheFolder = D:\PersonalCloudLibraryCache
-   ```
+To create a prerelease package:
 
-5. Run Update Game Library.
+```powershell
+.\tools\package-extension.ps1
+```
 
 ## Provider Modes
 
-`LocalFile` reads a specific manifest file. Downloads are only possible when an item's `sourcePath` can be resolved as a local file path.
+### LocalFile
 
-`LocalFolder` reads a manifest from `LocalLibraryRoot + ManifestRelativePath` and copies item files from `LocalLibraryRoot + sourcePath`.
+Reads a manifest from `LocalManifestPath`. If downloads are enabled, `sourcePath` can be absolute or relative to the manifest folder.
 
-`RcloneRemote` reads a manifest with `rclone cat` and downloads item files with `rclone copyto`.
+### LocalFolder, External Drive, or NAS
 
-Example rclone settings:
+Reads a manifest from:
+
+```text
+LocalLibraryRoot + ManifestRelativePath
+```
+
+Copies item files from:
+
+```text
+LocalLibraryRoot + sourcePath
+```
+
+### RcloneRemote
+
+Reads a manifest with:
+
+```text
+rclone cat remote:manifestPath
+```
+
+Copies item files with:
+
+```text
+rclone copyto remote:sourcePath localCachePath
+```
+
+Use this for Google Drive, OneDrive, Dropbox, and other providers supported by rclone.
+
+## LocalFile Setup
+
+```text
+SourceProviderType = LocalFile
+LocalManifestPath = D:\PersonalCloudLibrarySource\samples\personal-cloud-library.sample.json
+LocalCacheFolder = D:\PersonalCloudLibraryCache
+AllowDownloads = true
+TreatMissingFilesAsUninstalled = true
+EnableDiagnostics = true
+```
+
+## LocalFolder, External Drive, or NAS Setup
+
+```text
+SourceProviderType = LocalFolder
+LocalLibraryRoot = E:\PersonalLibrary
+ManifestRelativePath = personal-cloud-library.sample.json
+LocalCacheFolder = D:\PersonalCloudLibraryCache
+AllowDownloads = true
+```
+
+NAS example:
+
+```text
+LocalLibraryRoot = \\NAS\PersonalLibrary
+```
+
+## Google Drive via Rclone Setup
+
+Configure a Google Drive remote with `rclone config`, then map the plugin settings:
 
 ```text
 SourceProviderType = RcloneRemote
@@ -62,30 +149,95 @@ LocalCacheFolder = D:\PersonalCloudLibraryCache
 AllowDownloads = true
 ```
 
-Example local folder settings:
+## OneDrive via Rclone Setup
+
+Configure a OneDrive remote with `rclone config`, then use the same `RcloneRemote` settings pattern:
 
 ```text
-SourceProviderType = LocalFolder
-LocalLibraryRoot = E:\PersonalLibrary
-ManifestRelativePath = personal-cloud-library.sample.json
-LocalCacheFolder = D:\PersonalCloudLibraryCache
-AllowDownloads = true
+RcloneRemoteName = onedrive
+RcloneManifestPath = PersonalLibrary/personal-cloud-library.sample.json
+RcloneContentRoot = PersonalLibrary/files
 ```
 
-## Expected Sample Entries
+## Manifest Setup
 
-- Example Adventure
-- Example Puzzle Pack
-- Example Homebrew Demo
+Recommended v2 manifests use `sourcePath` for the provider source and `cachePath` for the local cached launch file.
 
-## Manifest Format
+```json
+{
+  "version": 2,
+  "items": [
+    {
+      "id": "example-adventure",
+      "title": "Example Adventure",
+      "platform": "Example Platform",
+      "sourcePath": "ExampleAdventure/ExampleAdventure.bat",
+      "cachePath": "ExampleAdventure\\ExampleAdventure.bat",
+      "installDirectory": "ExampleAdventure",
+      "launchFile": "ExampleAdventure.bat",
+      "notes": "Fake local sample entry for testing."
+    }
+  ]
+}
+```
 
-The manifest is a JSON file with a top-level `version` and an `items` array. Items use `sourcePath` for provider source files. Legacy `remotePath` remains supported as a fallback.
+See [docs/manifest-format.md](docs/manifest-format.md).
 
-See [docs/manifest-format.md](docs/manifest-format.md) for the field reference.
+## Download and Cache Behavior
+
+The plugin never downloads automatically before launch. Missing entries remain visible as uninstalled when `TreatMissingFilesAsUninstalled` is enabled. Use `Download to local cache` manually when `AllowDownloads` is enabled and the provider can resolve `sourcePath`.
+
+![Cloud-only status](docs/images/pcls-icon-success-cloud.png)
+
+Cloud-only entries are catalog entries without a cached local launch file. They can still exist in Playnite, use Playnite metadata, and become playable later after download/copy to local cache.
+
+![Cached status](docs/images/pcls-icon-success-cache.png)
+
+Cached entries have a local launch file and can launch locally through Playnite.
+
+## Uninstall and Cache Cleanup
+
+Playnite uninstall support removes local cached copies only. It does not remove cloud/source files, does not edit the manifest, and does not remove the Playnite game entry.
+
+![Cache and uninstall settings](docs/images/pcls-settings-cache-uninstall.png)
+
+By default, uninstall removes the cached install folder under `LocalCacheFolder`. You can change this with:
+
+```text
+UninstallBehavior = RemoveCachedInstallFolder
+```
+
+Supported values:
+
+- `RemoveCachedFileOnly`
+- `RemoveCachedInstallFolder`
+- `AskEachTime`
+
+`AllowUninstallOutsideCacheFolder` defaults to `false`. Leave it off unless you intentionally use absolute cache paths outside `LocalCacheFolder`.
+
+After removing the cached copy and updating the library, the manifest entry remains in Playnite as an uninstalled/cloud-only entry. Existing Playnite metadata can remain attached to the entry.
+
+## Screenshots
+
+Public-safe screenshots and visuals are kept under `docs/images/`:
+
+- settings screen
+- cloud-only uninstalled item
+- installed/cached playable item
+
+## Troubleshooting
+
+See [docs/troubleshooting.md](docs/troubleshooting.md) for common setup and visibility issues.
+
+## Privacy and Legal Use
+
+Personal Cloud Library Source reads user-supplied paths and manifests. It does not include private cloud IDs, native cloud API credentials, or bundled content.
+
+See [docs/legal-use.md](docs/legal-use.md).
 
 ## Roadmap
 
 - Phase 1: local manifest validation and UI polish.
 - Phase 2: provider-based local folder and rclone copy support.
 - Phase 3: cache verification/hash checks.
+- Phase 4: Playnite add-ons database readiness.
