@@ -235,6 +235,15 @@ Personal Cloud Library Source reads user-supplied paths and manifests. It does n
 
 See [docs/legal-use.md](docs/legal-use.md).
 
+## Playnite Add-on Browser Submission
+
+Playnite add-on database submission helpers are kept in `playnite-addon/`.
+
+- Installer manifest: `playnite-addon/installer.yaml`
+- Database listing helper: `playnite-addon/addon-database.yaml`
+
+`AddonId` must match `PersonalCloudLibrarySource/extension.yaml` exactly. The repository and release assets must be public for the Playnite add-on browser to install the package. After the add-on database PR is merged, normal users can install the package from Playnite's add-on browser instead of downloading the `.pext` manually.
+
 ## Roadmap
 
 - Phase 1: local manifest validation and UI polish.
