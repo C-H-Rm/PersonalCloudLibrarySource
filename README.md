@@ -242,14 +242,6 @@ Supported values:
 
 After removing the cached copy and updating the library, the manifest entry remains in Playnite as an uninstalled/cloud-only entry. Existing Playnite metadata can remain attached to the entry.
 
-## Screenshots
-
-Public-safe screenshots and visuals are kept under `docs/images/`:
-
-- settings screen
-- cloud-only uninstalled item
-- installed/cached playable item
-
 ## Troubleshooting
 
 See [docs/troubleshooting.md](docs/troubleshooting.md) for common setup and visibility issues.
