@@ -1,13 +1,5 @@
 # Personal Cloud Library Source
 
-![Personal Cloud Library Source workflow](docs/images/pcls-workflow.png)
-
-Personal Cloud Library Source imports a user-supplied cloud, NAS, external-drive, or local manifest into Playnite's normal library view. Cloud-only entries can appear before download, be enriched with Playnite metadata, downloaded or copied to a local cache when needed, launched locally, and later uninstalled from the cache while keeping the catalog entry.
-
-## Overview
-
-The plugin catalogs user-supplied entries and copies or downloads user-owned files from configured local folders or rclone remotes.
-
 ## How This Works
 
 ![Personal Cloud Library Source workflow](docs/images/pcls-workflow.png)
