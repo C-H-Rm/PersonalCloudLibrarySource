@@ -255,3 +255,4 @@ Playnite add-on database submission helpers are kept in `playnite-addon/`.
 - Phase 2: provider-based local folder and rclone copy support.
 - Phase 3: cache verification/hash checks.
 - Phase 4: Playnite add-ons database readiness.
+- Phase 5: Automatic manifest generation, based on file structures and naming conventions. Auto fill source paths for game installations.
