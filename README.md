@@ -43,11 +43,16 @@ This is not a gameplay streaming service. It does not provide games, ROMs, BIOS 
 
 ## Installation for Users
 
-1. Download the packaged `.pext` release from GitHub.
-2. Install the package in Playnite.
-3. Restart Playnite.
-4. Open plugin settings and choose a provider mode.
-5. Run `Update Game Library`.
+The recommended way to install **Personal Cloud Library Source** is through Playnite’s official add-on database.
+
+1. Open Playnite.
+2. Go to **Main Menu → Add-ons**.
+3. Open **Browse**.
+4. Search for **Personal Cloud Library Source**.
+5. Select the add-on and click **Install**.
+6. Restart Playnite when prompted.
+7. Open the plugin settings and choose a provider mode.
+8. Run **Update Game Library**.
 
 ![Provider settings example](docs/images/pcls-settings-provider.png)
 
