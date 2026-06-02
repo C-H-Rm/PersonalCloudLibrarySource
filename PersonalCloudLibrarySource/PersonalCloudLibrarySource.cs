@@ -466,34 +466,9 @@ namespace PersonalCloudLibrarySource
 
         public static string ResolveLaunchPath(PersonalCloudLibraryItem item, PersonalCloudLibrarySourceSettings pluginSettings)
         {
-            if (!string.IsNullOrWhiteSpace(item.CachePath))
+            if (item == null)
             {
-                if (Path.IsPathRooted(item.CachePath))
-                {
-                    return item.CachePath;
-                }
-
-                if (!string.IsNullOrWhiteSpace(pluginSettings.LocalCacheFolder))
-                {
-                    return Path.Combine(pluginSettings.LocalCacheFolder, item.CachePath);
-                }
-
-                return item.CachePath;
-            }
-
-            if (!string.IsNullOrWhiteSpace(item.LocalPath))
-            {
-                if (Path.IsPathRooted(item.LocalPath))
-                {
-                    return item.LocalPath;
-                }
-
-                if (!string.IsNullOrWhiteSpace(pluginSettings.LocalCacheFolder))
-                {
-                    return Path.Combine(pluginSettings.LocalCacheFolder, item.LocalPath);
-                }
-
-                return item.LocalPath;
+                return string.Empty;
             }
 
             if (!string.IsNullOrWhiteSpace(item.InstallDirectory) &&
@@ -514,6 +489,7 @@ namespace PersonalCloudLibrarySource
 
             return string.Empty;
         }
+
 
         public static string ResolveInstallDirectory(
             PersonalCloudLibraryItem item,

@@ -1,7 +1,12 @@
 using Playnite.SDK;
 using Playnite.SDK.Models;
 using Playnite.SDK.Plugins;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.IO;
+using System.Collections.ObjectModel;
+
+
 
 namespace PersonalCloudLibrarySource
 {
@@ -32,10 +37,10 @@ namespace PersonalCloudLibrarySource
         {
             var launchPath = PersonalCloudLibrarySource.ResolveLaunchPath(item, settings);
             var installDirectory = PersonalCloudLibrarySource.ResolveInstallDirectory(item, settings, launchPath);
-            var destinationFilePath = PersonalCloudLibrarySource.ResolveDownloadDestinationFilePath(item, settings, launchPath);
+            var destinationFolderPath = PersonalCloudLibrarySource.ResolveDownloadDestinationFolder(item, settings, launchPath);
             var sourcePath = PersonalCloudLibrarySource.GetItemSourcePath(item);
 
-            logger.Info($"Personal Cloud Library Source downloading item {item.Id} to {destinationFilePath}.");
+            logger.Info($"Personal Cloud Library Source downloading item {item.Id} to {destinationFolderPath}.");
             var providerType = PersonalCloudLibrarySource.GetProviderType(settings);
             var succeeded = false;
             string message = null;
@@ -44,7 +49,7 @@ namespace PersonalCloudLibrarySource
             if (string.Equals(providerType, PersonalCloudLibrarySourceSettings.RcloneRemoteProviderType, System.StringComparison.OrdinalIgnoreCase))
             {
                 var rcloneSourcePath = PersonalCloudLibrarySource.ResolveRcloneSourcePath(settings, sourcePath);
-                var result = rcloneFileCopier.CopyRemoteFileToLocalPath(settings, rcloneSourcePath, destinationFilePath);
+                var result = rcloneFileCopier.CopyRemoteDirectoryToLocalPath(settings, rcloneSourcePath, destinationFolderPath);
                 succeeded = result.Succeeded;
                 message = result.Message;
                 exception = result.Exception;
@@ -52,7 +57,7 @@ namespace PersonalCloudLibrarySource
             else
             {
                 var localSourcePath = PersonalCloudLibrarySource.ResolveLocalFolderSourcePath(settings, sourcePath);
-                var result = localFileCopier.CopyFileToLocalPath(localSourcePath, destinationFilePath);
+                var result = localFileCopier.CopyFileToLocalPath(localSourcePath, destinationFolderPath);
                 succeeded = result.Succeeded;
                 message = result.Message;
                 exception = result.Exception;
@@ -83,6 +88,34 @@ namespace PersonalCloudLibrarySource
 
             Game.IsInstalled = true;
             Game.InstallDirectory = installDirectory;
+            if (Game.GameActions == null)
+            {
+                Game.GameActions = new ObservableCollection<GameAction>()
+    {
+        new GameAction
+        {
+            Name = "Play",
+            Type = GameActionType.File,
+            Path = launchPath,
+            WorkingDir = installDirectory,
+            IsPlayAction = true
+        }
+    };
+            }
+            else
+            {
+                Game.GameActions.Clear();
+                Game.GameActions.Add(new GameAction
+                {
+                    Name = "Play",
+                    Type = GameActionType.File,
+                    Path = launchPath,
+                    WorkingDir = installDirectory,
+                    IsPlayAction = true
+                });
+            }
+
+
 
             InvokeOnInstalled(new GameInstalledEventArgs(new GameInstallationData
             {

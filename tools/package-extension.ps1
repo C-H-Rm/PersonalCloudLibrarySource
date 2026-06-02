@@ -5,7 +5,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$msbuild = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
+$msbuild = $msbuild = "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe"
 $solution = Join-Path $repoRoot "PersonalCloudLibrarySource\PersonalCloudLibrarySource.sln"
 $configuration = "Release"
 $projectOutput = Join-Path $repoRoot "PersonalCloudLibrarySource\bin\$configuration"
