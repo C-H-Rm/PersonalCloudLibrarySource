@@ -165,7 +165,8 @@ namespace PersonalCloudLibrarySource
                     Arguments = "copy " +
                         RcloneManifestReader.QuoteArgument(remoteDirectoryFullPath) +
                         " " +
-                        RcloneManifestReader.QuoteArgument(localDirectoryPath),
+                        RcloneManifestReader.QuoteArgument(localDirectoryPath) +
+    " --timeout 5m --contimeout 30s --retries 5 --low-level-retries 20",
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
