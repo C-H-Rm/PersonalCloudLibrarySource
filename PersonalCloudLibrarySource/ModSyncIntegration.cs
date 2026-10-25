@@ -123,7 +123,7 @@ namespace PersonalCloudLibrarySource
             var local = Path.GetFullPath(Path.IsPathRooted(item.ModPath) ? item.ModPath : Path.Combine(install, item.ModPath));
             if (!Path.IsPathRooted(item.ModPath) && !ModSyncService.IsWithin(local, install))
                 throw new InvalidOperationException("Relative modPath may not escape the game install folder. Use an explicit absolute path for an external mod folder.");
-            var remoteRelative = ResolveCloudModFolder(s.RcloneContentRoot, item.Title, item.ModFolder);
+            var remoteRelative = ModSyncService.ResolveCloudModFolder(s.RcloneContentRoot, item.Id);
             if (string.IsNullOrWhiteSpace(s.RcloneRemoteName) || s.RcloneRemoteName.IndexOfAny(new[] { ':', '/', '\\', '\r', '\n', '"' }) >= 0)
                 throw new InvalidOperationException("Invalid rclone remote name for mod sync.");
             foreach (var other in manifest.Items.Where(i => i != null))
@@ -133,8 +133,8 @@ namespace PersonalCloudLibrarySource
                     throw new InvalidOperationException("The cloud mod folder overlaps a base game source path. Keep game data and mods separate.");
                 if (!string.IsNullOrWhiteSpace(other.ModPath) && !string.Equals(item.Id, other.Id, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (string.Equals(remoteRelative, ResolveCloudModFolder(s.RcloneContentRoot, other.Title, other.ModFolder), StringComparison.OrdinalIgnoreCase))
-                        throw new InvalidOperationException("Two games share a cloud mod folder. Set distinct, stable modFolder values.");
+                    if (string.Equals(remoteRelative, ModSyncService.ResolveCloudModFolder(s.RcloneContentRoot, other.Id), StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException("Two games share a cloud mod folder. Use distinct game IDs.");
                     var otherLaunch = ResolveLaunchPath(other, s);
                     var otherInstall = ResolveInstallDirectory(other, s, otherLaunch);
                     var otherLocal = Path.IsPathRooted(other.ModPath) ? other.ModPath : Path.Combine(otherInstall, other.ModPath);
@@ -154,19 +154,6 @@ namespace PersonalCloudLibrarySource
                 LaunchFile = launch, StateDirectory = state, RcloneExecutable = s.RcloneExecutablePath,
                 TimeoutSeconds = s.ModSyncTimeoutSeconds
             };
-        }
-
-        internal static string ResolveCloudModFolder(string root, string title, string explicitFolder)
-        {
-            root = (root ?? string.Empty).Replace('\\', '/').Trim('/');
-            if (root.Split('/').Any(part => part == ".." || part == ".") || root.IndexOfAny(new[] { ':', '\r', '\n', '"' }) >= 0)
-                throw new InvalidOperationException("Invalid rclone content root for mods.");
-            var folder = explicitFolder;
-            if (string.IsNullOrWhiteSpace(folder))
-                folder = new string((title ?? string.Empty).Select(c => char.IsControl(c) || "<>:\"/\\|?*".IndexOf(c) >= 0 ? '_' : c).ToArray()).TrimEnd(' ', '.');
-            if (string.IsNullOrWhiteSpace(folder) || folder == "." || folder == ".." || folder.IndexOfAny("<>:\"/\\|?*\r\n".ToCharArray()) >= 0 || folder.EndsWith(".") || folder.EndsWith(" "))
-                throw new InvalidOperationException("modFolder must be one non-empty folder name, without separators or traversal.");
-            return (string.IsNullOrEmpty(root) ? "" : root + "/") + "mods/" + folder;
         }
 
         private static bool RemotePathsOverlap(string a, string b)

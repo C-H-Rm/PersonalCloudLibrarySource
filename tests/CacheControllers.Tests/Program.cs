@@ -220,6 +220,25 @@ class Program
             using var f = new Fixture(); var plugin = f.MenuPlugin("{\"items\":[null,{\"id\":\"TEST\",\"modPath\":\"Mods\"}]}");
             Check(plugin.GetGameMenuItems(new GetGameMenuItemsArgs { Games = new[] { f.Game } }).Count() == 2, "matching entry was hidden");
         });
+        Test("cloud mod folders use the literal manifest ID", () => {
+            Check(ModSyncService.ResolveCloudModFolder("Library/files", "skyrim-se") == "Library/files/mods/skyrim-se", "wrong ID folder");
+            Check(ModSyncService.ResolveCloudModFolder(null, "Game-ID_1") == "mods/Game-ID_1", "ID was normalized");
+            Check(ModSyncService.ResolveCloudModFolder("/Library/files/", "game-2") == "Library/files/mods/game-2", "root normalization changed");
+        });
+        foreach (var id in new[] { null, "", " ", ".", "..", "../game", "game/path", @"game\path", "game:edition", "game\"name", "game*", "game?", "game|", "game<", "game>", "game.", "game ", "game\nname", "game\u0001name" })
+        Test("unsafe game ID is refused rather than rewritten: " + (id ?? "null"), () => {
+            bool refused = false;
+            try { ModSyncService.ResolveCloudModFolder("Library/files", id); }
+            catch (InvalidOperationException) { refused = true; }
+            Check(refused, "invalid ID was accepted or silently rewritten");
+        });
+        foreach (var root in new[] { "../Library", "Library/../games", "Library/./games", "remote:games", "Library\nfiles", "Library\"files" })
+        Test("unsafe mod content root is refused: " + root, () => {
+            bool refused = false;
+            try { ModSyncService.ResolveCloudModFolder(root, "game-id"); }
+            catch (InvalidOperationException) { refused = true; }
+            Check(refused, "unsafe root was accepted");
+        });
         Console.WriteLine($"RESULT Cache controllers: {passed} passed, {failed} failed");
         return failed == 0 ? 0 : 1;
     }
