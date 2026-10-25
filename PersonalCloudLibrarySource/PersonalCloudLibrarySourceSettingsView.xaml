@@ -199,15 +199,20 @@
                        TextWrapping="Wrap"
                        Margin="0,0,0,14"/>
 
-            <TextBlock Text="Rclone timeout seconds:"
+            <TextBlock Text="Rclone manifest / connection timeout seconds:"
                        FontWeight="SemiBold"
                        Margin="0,0,0,4"/>
 
             <TextBox Text="{Binding Settings.RcloneTimeoutSeconds, UpdateSourceTrigger=PropertyChanged}"
-                     MinWidth="120"
-                     Margin="0,0,0,6"/>
+                      MinWidth="120"
+                      Margin="0,0,0,6"/>
 
-            <TextBlock Text="Maximum time to wait for rclone manifest and copy commands. Use 5 to 300 seconds."
+            <TextBlock Text="Transfer inactivity timeout seconds (not total download duration):"
+                       FontWeight="SemiBold" Margin="0,8,0,4"/>
+            <TextBox Text="{Binding Settings.RcloneTransferInactivityTimeoutSeconds, UpdateSourceTrigger=PropertyChanged}"
+                     MinWidth="120" Margin="0,0,0,6"/>
+
+            <TextBlock Text="Manifest and connection checks use 5 to 300 seconds. Transfer inactivity uses 5 to 86400 seconds; progressing downloads have no total-duration limit."
                        Opacity="0.7"
                        TextWrapping="Wrap"
                        Margin="0,0,0,14"/>

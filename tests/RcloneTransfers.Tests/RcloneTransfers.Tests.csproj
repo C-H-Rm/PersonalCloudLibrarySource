@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../PersonalCloudLibrarySource/RcloneFileCopier.cs" Link="RcloneFileCopier.cs" />
+    <Compile Include="../../PersonalCloudLibrarySource/RcloneManifestReader.cs" Link="RcloneManifestReader.cs" />
+    <Compile Include="../../PersonalCloudLibrarySource/RcloneActivityTimeout.cs" Link="RcloneActivityTimeout.cs" />
+  </ItemGroup>
+</Project>
