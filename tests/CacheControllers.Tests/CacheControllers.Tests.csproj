@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../PersonalCloudLibrarySource/PersonalCloudLibraryUninstallController.cs" Link="PersonalCloudLibraryUninstallController.cs" />
+    <Compile Include="../../PersonalCloudLibrarySource/RcloneInstallController.cs" Link="RcloneInstallController.cs" />
+  </ItemGroup>
+</Project>
