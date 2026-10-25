@@ -47,7 +47,10 @@ class Program
                 @"\??\C:\game.exe",
                 @"\Device\HarddiskVolume1\game.exe",
                 Path.GetPathRoot(f.Cache),
-                @"\\server\share\"
+                @"\\server\share\",
+                @"C:\folder\..",
+                @"C:\.",
+                @"\\server\share\folder\.."
             };
             foreach (var candidate in candidates)
             {
@@ -63,6 +66,13 @@ class Program
             Check(!policy.Authorize(f.Cache, f.Cache, true).Allowed, "cache root was accepted");
             Check(!policy.Authorize(f.Cache, f.Root, true).Allowed, "cache parent was accepted");
             Check(!policy.Authorize(f.Cache, Path.GetDirectoryName(f.Root), true).Allowed, "cache grandparent was accepted");
+        });
+
+        Test("normalized roots are refused even with a cache on another volume", () =>
+        {
+            var policy = new SafeCacheDeletionPolicy();
+            foreach (var target in new[] { @"C:\folder\..", @"C:\.", @"\\server\share\folder\.." })
+                Check(!policy.Authorize(@"Z:\cache", target, true).Allowed, "normalized volume/share root accepted: " + target);
         });
 
         Test("outside-cache deletion requires explicit opt-in", () =>

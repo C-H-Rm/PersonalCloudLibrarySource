@@ -11,424 +11,126 @@ namespace PersonalCloudLibrarySource
         public string Reason { get; set; } = string.Empty;
     }
 
-    // Deliberately SDK-independent: this is the single policy used by menu resolution and deletion.
+    // Shared by menu eligibility and the deletion worker; adapted from upstream's policy.
     public sealed class SafeCacheDeletionPolicy
     {
+        private static readonly StringComparison PathComparison = Path.DirectorySeparatorChar == '\\'
+            ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
         public CacheDeletionAuthorization Authorize(string cacheRoot, string targetPath, bool allowOutsideCache)
+            => Authorize(cacheRoot, targetPath, allowOutsideCache, false);
+
+        public CacheDeletionAuthorization Authorize(string cacheRoot, string targetPath, bool allowOutsideCache, bool inspectDescendantLinks)
         {
-            return Authorize(cacheRoot, targetPath, allowOutsideCache, false);
-        }
-
-        // Descendant inspection is reserved for the deletion worker. Menu preparation must not walk a tree.
-        public CacheDeletionAuthorization Authorize(
-            string cacheRoot,
-            string targetPath,
-            bool allowOutsideCache,
-            bool inspectDescendantLinks)
-        {
-            if (string.IsNullOrWhiteSpace(targetPath))
-            {
-                return Refuse("uninstall target path is empty");
-            }
-
-            if (IsWindowsDeviceNamespacePath(targetPath))
-            {
-                return Refuse("uninstall target is a Windows device namespace path");
-            }
-
-            if (!IsFullyQualifiedPath(targetPath))
-            {
-                return Refuse("uninstall target path must be fully rooted");
-            }
-
-            if (IsVolumeOrShareRoot(targetPath))
-            {
-                return Refuse("uninstall target is a drive or share root");
-            }
-
-            string normalizedTarget;
-            string normalizedCache = string.Empty;
             try
             {
-                normalizedTarget = NormalizePath(targetPath);
+                if (!IsFullyQualified(targetPath) || IsDevicePath(targetPath))
+                    return Refuse("uninstall target must be fully rooted and must not be a device namespace path");
+                var target = Normalize(targetPath);
+                // Check AFTER normalization: C:\\folder\\.. is also a volume root.
+                if (string.Equals(target, Normalize(Path.GetPathRoot(target)), PathComparison))
+                    return Refuse("uninstall target is a drive or share root");
+                string cache = null;
                 if (!string.IsNullOrWhiteSpace(cacheRoot))
                 {
-                    if (IsWindowsDeviceNamespacePath(cacheRoot) || !IsFullyQualifiedPath(cacheRoot))
-                    {
+                    if (!IsFullyQualified(cacheRoot) || IsDevicePath(cacheRoot))
                         return Refuse("LocalCacheFolder must be fully rooted and must not be a device namespace path");
-                    }
-
-                    normalizedCache = NormalizePath(cacheRoot);
+                    cache = Normalize(cacheRoot);
+                    if (string.Equals(cache, target, PathComparison) || IsDescendant(target, cache))
+                        return Refuse("uninstall target is LocalCacheFolder itself or an ancestor of it");
                 }
+                if (!allowOutsideCache && (cache == null || !IsDescendant(cache, target)))
+                    return Refuse("uninstall target is outside LocalCacheFolder");
+
+                for (var current = target; !string.IsNullOrEmpty(current); current = Path.GetDirectoryName(current))
+                    RejectLink(current, ReadAttributes(current));
+                if (inspectDescendantLinks) InspectDescendants(target);
+                return new CacheDeletionAuthorization { Allowed = true, TargetPath = target };
             }
             catch (Exception ex)
             {
-                return Refuse("uninstall path could not be normalized: " + ex.Message);
+                return Refuse("uninstall path could not be safely inspected: " + ex.Message);
             }
-
-            if (!string.IsNullOrWhiteSpace(normalizedCache))
-            {
-                if (PathsEqual(normalizedTarget, normalizedCache))
-                {
-                    return Refuse("uninstall target is LocalCacheFolder itself");
-                }
-
-                if (IsPathAncestor(normalizedTarget, normalizedCache))
-                {
-                    return Refuse("uninstall target is an ancestor of LocalCacheFolder");
-                }
-
-                if (!allowOutsideCache && !IsStrictDescendant(normalizedCache, normalizedTarget))
-                {
-                    return Refuse("uninstall target is outside LocalCacheFolder");
-                }
-            }
-            else if (!allowOutsideCache)
-            {
-                return Refuse("LocalCacheFolder is required unless outside-cache uninstall is explicitly enabled");
-            }
-
-            string reparseReason;
-            if (!TryFindReparsePoint(normalizedTarget, out reparseReason))
-            {
-                return Refuse(reparseReason);
-            }
-
-            if (inspectDescendantLinks)
-            {
-                string descendantReason;
-                if (!TryFindDescendantReparsePoint(normalizedTarget, out descendantReason))
-                {
-                    return Refuse(descendantReason);
-                }
-            }
-
-            return new CacheDeletionAuthorization
-            {
-                Allowed = true,
-                TargetPath = normalizedTarget
-            };
         }
 
         public bool IsStrictlyInsideCache(string cacheRoot, string candidatePath)
         {
-            if (string.IsNullOrWhiteSpace(cacheRoot) || string.IsNullOrWhiteSpace(candidatePath))
-            {
-                return false;
-            }
-
             try
             {
-                return IsStrictDescendant(NormalizePath(cacheRoot), NormalizePath(candidatePath));
+                return IsFullyQualified(cacheRoot) && IsFullyQualified(candidatePath) &&
+                    IsDescendant(Normalize(cacheRoot), Normalize(candidatePath));
             }
-            catch
-            {
-                return false;
-            }
+            catch { return false; }
         }
 
-        private static bool TryFindReparsePoint(string target, out string reason)
+        // Never use recursive enumeration, which could follow a junction before it is checked.
+        private static void InspectDescendants(string target)
         {
-            var current = target;
-            while (!string.IsNullOrWhiteSpace(current))
+            var attributes = ReadAttributes(target);
+            if (attributes == null || (attributes.Value & FileAttributes.Directory) == 0) return;
+            var pending = new Stack<string>();
+            pending.Push(target);
+            while (pending.Count != 0)
             {
-                FileAttributes attributes;
-                bool exists;
-                if (!TryReadAttributes(current, out attributes, out exists, out reason))
+                var directory = pending.Pop();
+                RejectLink(directory, ReadAttributes(directory));
+                foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
                 {
-                    return false;
+                    var child = ReadAttributes(entry);
+                    if (child == null) throw new IOException("A descendant disappeared during validation.");
+                    RejectLink(entry, child);
+                    if ((child.Value & FileAttributes.Directory) != 0) pending.Push(entry);
                 }
-
-                if (exists && (attributes & FileAttributes.ReparsePoint) != 0)
-                {
-                    reason = "uninstall target or ancestor is a reparse point: " + current;
-                    return false;
-                }
-
-                string parent;
-                try
-                {
-                    parent = Path.GetDirectoryName(current);
-                }
-                catch (Exception ex)
-                {
-                    reason = "uninstall path ancestor could not be inspected: " + ex.Message;
-                    return false;
-                }
-
-                if (string.IsNullOrWhiteSpace(parent) || PathsEqual(parent, current))
-                {
-                    break;
-                }
-
-                current = parent;
             }
-
-            reason = string.Empty;
-            return true;
         }
 
-        private static bool TryFindDescendantReparsePoint(string target, out string reason)
+        private static FileAttributes? ReadAttributes(string path)
         {
-            FileAttributes attributes;
-            bool exists;
-            if (!TryReadAttributes(target, out attributes, out exists, out reason))
-            {
-                return false;
-            }
-
-            if (!exists || (attributes & FileAttributes.Directory) == 0)
-            {
-                reason = string.Empty;
-                return true;
-            }
-
-            return TryScanDirectory(target, out reason);
+            try { return File.GetAttributes(path); }
+            catch (FileNotFoundException) { return null; }
+            catch (DirectoryNotFoundException) { return null; }
+            // Access/IO failures are not absence: the caller refuses deletion.
         }
 
-        private static bool TryScanDirectory(string directory, out string reason)
+        private static void RejectLink(string path, FileAttributes? attributes)
         {
-            IEnumerable<FileSystemInfo> entries;
-            try
-            {
-                entries = new DirectoryInfo(directory).EnumerateFileSystemInfos();
-            }
-            catch (Exception ex)
-            {
-                reason = "uninstall target descendants could not be inspected: " + ex.Message;
-                return false;
-            }
-
-            try
-            {
-                foreach (var entry in entries)
-                {
-                    FileAttributes attributes;
-                    bool exists;
-                    if (!TryReadAttributes(entry.FullName, out attributes, out exists, out reason))
-                    {
-                        return false;
-                    }
-
-                    if (!exists)
-                    {
-                        reason = "uninstall target descendant disappeared while it was being inspected";
-                        return false;
-                    }
-
-                    if ((attributes & FileAttributes.ReparsePoint) != 0)
-                    {
-                        reason = "uninstall target contains a reparse point: " + entry.FullName;
-                        return false;
-                    }
-
-                    if ((attributes & FileAttributes.Directory) != 0 && !TryScanDirectory(entry.FullName, out reason))
-                    {
-                        return false;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                reason = "uninstall target descendants could not be inspected: " + ex.Message;
-                return false;
-            }
-
-            reason = string.Empty;
-            return true;
+            if (attributes != null && (attributes.Value & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("The uninstall target contains or passes through a reparse point: " + path);
         }
 
-        private static bool TryReadAttributes(
-            string path,
-            out FileAttributes attributes,
-            out bool exists,
-            out string reason)
+        private static bool IsFullyQualified(string path)
         {
-            try
-            {
-                attributes = File.GetAttributes(path);
-                exists = true;
-                reason = string.Empty;
-                return true;
-            }
-            catch (FileNotFoundException)
-            {
-                attributes = 0;
-                exists = false;
-                reason = string.Empty;
-                return true;
-            }
-            catch (DirectoryNotFoundException)
-            {
-                attributes = 0;
-                exists = false;
-                reason = string.Empty;
-                return true;
-            }
-            catch (Exception ex)
-            {
-                attributes = 0;
-                exists = false;
-                reason = "uninstall path could not be inspected: " + ex.Message;
-                return false;
-            }
+            if (string.IsNullOrWhiteSpace(path) || !Path.IsPathRooted(path)) return false;
+            var root = Path.GetPathRoot(path);
+            if (Path.DirectorySeparatorChar == '/') return path[0] == '/' && !path.StartsWith("//", StringComparison.Ordinal);
+            // Exclude C:relative and \\current-drive paths; Path.IsPathRooted alone accepts them.
+            return root.Length >= 3 && ((root[1] == ':' && (root[2] == '\\' || root[2] == '/')) ||
+                root.StartsWith(@"\\", StringComparison.Ordinal));
         }
 
-        private static string NormalizePath(string path)
+        private static bool IsDevicePath(string path)
+        {
+            path = path.Replace('/', '\\');
+            return path.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase) ||
+                path.StartsWith(@"\\.\", StringComparison.OrdinalIgnoreCase) ||
+                path.StartsWith(@"\??\", StringComparison.OrdinalIgnoreCase) ||
+                path.StartsWith(@"\Device\", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string Normalize(string path)
         {
             var full = Path.GetFullPath(path);
             var root = Path.GetPathRoot(full);
             var trimmed = full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            return string.IsNullOrWhiteSpace(trimmed) ? root : trimmed;
+            return string.Equals(trimmed, root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), PathComparison)
+                ? root : trimmed;
         }
 
-        private static bool IsStrictDescendant(string root, string candidate)
-        {
-            return !PathsEqual(root, candidate) && IsPathAncestor(root, candidate);
-        }
+        private static bool IsDescendant(string root, string candidate)
+            => !string.Equals(root, candidate, PathComparison) &&
+                candidate.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar, PathComparison);
 
-        private static bool IsPathAncestor(string possibleAncestor, string possibleDescendant)
-        {
-            if (PathsEqual(possibleAncestor, possibleDescendant))
-            {
-                return false;
-            }
-
-            var ancestor = possibleAncestor.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            var descendant = possibleDescendant.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            if (ancestor.Length == 0)
-            {
-                ancestor = Path.DirectorySeparatorChar.ToString();
-            }
-
-            return descendant.StartsWith(ancestor + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
-                (Path.AltDirectorySeparatorChar != Path.DirectorySeparatorChar &&
-                 descendant.StartsWith(ancestor + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
-        }
-
-        private static bool PathsEqual(string left, string right)
-        {
-            return string.Equals(
-                left.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                right.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static bool IsFullyQualifiedPath(string path)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return false;
-            }
-
-            if (IsWindowsDrivePath(path))
-            {
-                return Path.DirectorySeparatorChar == '\\' &&
-                    path.Length >= 3 && IsDirectorySeparator(path[2]);
-            }
-
-            if (IsUncPath(path))
-            {
-                return Path.DirectorySeparatorChar == '\\' && HasUncShare(path);
-            }
-
-            if (Path.DirectorySeparatorChar == '/' && path[0] == '/')
-            {
-                return true;
-            }
-
-            return Path.DirectorySeparatorChar == '\\' &&
-                path[0] != '\\' &&
-                Path.IsPathRooted(path);
-        }
-
-        private static bool IsVolumeOrShareRoot(string path)
-        {
-            if (IsWindowsDrivePath(path))
-            {
-                return path.Length == 3 && IsDirectorySeparator(path[2]);
-            }
-
-            if (IsUncPath(path))
-            {
-                return HasUncShare(path) && CountUncComponents(path) == 2;
-            }
-
-            try
-            {
-                var full = Path.GetFullPath(path);
-                var root = Path.GetPathRoot(full);
-                return !string.IsNullOrWhiteSpace(root) && PathsEqual(full, root);
-            }
-            catch
-            {
-                return true;
-            }
-        }
-
-        private static bool IsWindowsDeviceNamespacePath(string path)
-        {
-            return path.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith(@"\\.\", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith(@"\??\", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith(@"\Device\", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("//?/", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("//./", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("/??/", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static bool IsWindowsDrivePath(string path)
-        {
-            return path.Length >= 2 && char.IsLetter(path[0]) && path[1] == ':';
-        }
-
-        private static bool IsUncPath(string path)
-        {
-            return path.Length >= 2 && IsDirectorySeparator(path[0]) && IsDirectorySeparator(path[1]);
-        }
-
-        private static bool HasUncShare(string path)
-        {
-            return CountUncComponents(path) >= 2;
-        }
-
-        private static int CountUncComponents(string path)
-        {
-            var components = new List<string>();
-            var current = string.Empty;
-            for (var i = 2; i < path.Length; i++)
-            {
-                if (IsDirectorySeparator(path[i]))
-                {
-                    if (current.Length > 0)
-                    {
-                        components.Add(current);
-                        current = string.Empty;
-                    }
-                }
-                else
-                {
-                    current += path[i];
-                }
-            }
-
-            if (current.Length > 0)
-            {
-                components.Add(current);
-            }
-
-            return components.Count;
-        }
-
-        private static bool IsDirectorySeparator(char value)
-        {
-            return value == '/' || value == '\\';
-        }
-
-        private static CacheDeletionAuthorization Refuse(string reason)
-        {
-            return new CacheDeletionAuthorization { Reason = reason };
-        }
+        private static CacheDeletionAuthorization Refuse(string reason) => new CacheDeletionAuthorization { Reason = reason };
     }
 
     public sealed class SafeCacheDeletionExecutor
@@ -437,15 +139,9 @@ namespace PersonalCloudLibrarySource
         private readonly Action<string> deleteFile;
         private readonly Action<string> deleteDirectory;
 
-        public SafeCacheDeletionExecutor()
-            : this(new SafeCacheDeletionPolicy(), File.Delete, path => Directory.Delete(path, true))
-        {
-        }
+        public SafeCacheDeletionExecutor() : this(new SafeCacheDeletionPolicy(), File.Delete, path => Directory.Delete(path, true)) { }
 
-        public SafeCacheDeletionExecutor(
-            SafeCacheDeletionPolicy policy,
-            Action<string> deleteFile,
-            Action<string> deleteDirectory)
+        public SafeCacheDeletionExecutor(SafeCacheDeletionPolicy policy, Action<string> deleteFile, Action<string> deleteDirectory)
         {
             this.policy = policy ?? throw new ArgumentNullException(nameof(policy));
             this.deleteFile = deleteFile ?? throw new ArgumentNullException(nameof(deleteFile));
@@ -453,45 +149,19 @@ namespace PersonalCloudLibrarySource
         }
 
         public CacheDeletionAuthorization Authorize(string cacheRoot, string targetPath, bool allowOutsideCache)
-        {
-            return policy.Authorize(cacheRoot, targetPath, allowOutsideCache, true);
-        }
+            => policy.Authorize(cacheRoot, targetPath, allowOutsideCache, true);
 
         public CacheDeletionAuthorization Delete(string cacheRoot, string targetPath, bool allowOutsideCache)
         {
             var authorization = Authorize(cacheRoot, targetPath, allowOutsideCache);
-            if (!authorization.Allowed)
-            {
-                return authorization;
-            }
-
-            // This check deliberately remains separate from the managed filesystem mutation.
-            // It narrows, but cannot eliminate, the check/use race with another process.
-            authorization = policy.Authorize(cacheRoot, authorization.TargetPath, allowOutsideCache, true);
-            if (!authorization.Allowed)
-            {
-                return authorization;
-            }
-
-            if (File.Exists(authorization.TargetPath))
-            {
-                deleteFile(authorization.TargetPath);
-            }
-            else if (Directory.Exists(authorization.TargetPath))
-            {
-                deleteDirectory(authorization.TargetPath);
-            }
-            else
-            {
-                return Refuse("uninstall target does not exist");
-            }
-
+            if (!authorization.Allowed) return authorization;
+            // Recheck target/ancestors after the tree scan. Managed check/use cannot be atomic.
+            authorization = policy.Authorize(cacheRoot, authorization.TargetPath, allowOutsideCache);
+            if (!authorization.Allowed) return authorization;
+            if (File.Exists(authorization.TargetPath)) deleteFile(authorization.TargetPath);
+            else if (Directory.Exists(authorization.TargetPath)) deleteDirectory(authorization.TargetPath);
+            else return new CacheDeletionAuthorization { Reason = "uninstall target does not exist" };
             return authorization;
-        }
-
-        private static CacheDeletionAuthorization Refuse(string reason)
-        {
-            return new CacheDeletionAuthorization { Reason = reason };
         }
     }
 }

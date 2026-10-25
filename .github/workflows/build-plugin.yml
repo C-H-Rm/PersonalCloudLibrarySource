@@ -7,6 +7,8 @@ on:
     paths:
       - PersonalCloudLibrarySource/**
       - tests/CacheControllers.Tests/**
+      - tests/CacheSafety.Tests/**
+      - tests/RcloneTransfers.Tests/**
       - tools/package-extension.ps1
       - tools/verify-package.ps1
       - tools/test-package-extension.ps1
@@ -18,6 +20,8 @@ on:
     paths:
       - PersonalCloudLibrarySource/**
       - tests/CacheControllers.Tests/**
+      - tests/CacheSafety.Tests/**
+      - tests/RcloneTransfers.Tests/**
       - tools/package-extension.ps1
       - tools/verify-package.ps1
       - tools/test-package-extension.ps1
@@ -56,6 +60,24 @@ jobs:
 
       - name: Test async cache controllers
         run: dotnet run --project tests/CacheControllers.Tests/CacheControllers.Tests.csproj --configuration Release
+
+      - name: Test cache deletion safety
+        run: dotnet run --project tests/CacheSafety.Tests/CacheSafety.Tests.csproj --configuration Release
+
+      - name: Set up verified rclone for transfer tests
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'rclone-v1.75.2-windows-amd64.zip'
+          Invoke-WebRequest 'https://github.com/rclone/rclone/releases/download/v1.75.2/rclone-v1.75.2-windows-amd64.zip' -OutFile $archive
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne '8a9db2bad1dc79a65b3348fd857069598e2aab7cf4d118b77b1df23055aff818') {
+            throw 'rclone archive checksum mismatch.'
+          }
+          $root = Join-Path $env:RUNNER_TEMP 'pcls-rclone'
+          Expand-Archive -LiteralPath $archive -DestinationPath $root
+          "PCLS_RCLONE=$root/rclone-v1.75.2-windows-amd64/rclone.exe" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "PCLS_DOTNET=$((Get-Command dotnet).Source)" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Test rclone transfer timeouts and local copies
+        run: dotnet run --project tests/RcloneTransfers.Tests/RcloneTransfers.Tests.csproj --configuration Release
 
       - name: Build, package and inspect Playnite plugin
         id: package

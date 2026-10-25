@@ -62,23 +62,31 @@ namespace PersonalCloudLibrarySource
                     process.ErrorDataReceived += (_, args) => Capture(error, args.Data, logGate, timeout, timer);
                     timer.Restart();
                     process.Start();
-                    process.BeginOutputReadLine();
-                    process.BeginErrorReadLine();
-                    while (!process.WaitForExit(200))
+                    try
                     {
-                        var expired = timeout.GetExpiredKind(timer.Elapsed);
-                        if (expired == RcloneTimeoutKind.None) continue;
-                        if (!TryStop(process)) return RcloneCopyResult.Fail("rclone timed out, but the child process could not be stopped.");
-                        return RcloneCopyResult.Fail(expired == RcloneTimeoutKind.Connect
-                            ? $"rclone did not report activity within {connectSeconds} seconds."
-                            : $"rclone transfer was inactive for {inactiveSeconds} seconds.");
+                        process.BeginOutputReadLine();
+                        process.BeginErrorReadLine();
+                        while (!process.WaitForExit(200))
+                        {
+                            var expired = timeout.GetExpiredKind(timer.Elapsed);
+                            if (expired == RcloneTimeoutKind.None) continue;
+                            if (!TryStop(process)) return RcloneCopyResult.Fail("rclone timed out, but the child process could not be stopped.");
+                            return RcloneCopyResult.Fail(expired == RcloneTimeoutKind.Connect
+                                ? $"rclone did not report activity within {connectSeconds} seconds."
+                                : $"rclone transfer was inactive for {inactiveSeconds} seconds.");
+                        }
+                        process.WaitForExit(); // Drain asynchronous output before reading the result.
+                        lock (logGate)
+                        {
+                            return process.ExitCode == 0
+                                ? RcloneCopyResult.Success(RcloneManifestReader.TrimForLog(output.ToString()))
+                                : RcloneCopyResult.Fail($"rclone {command} failed with exit code {process.ExitCode}: {RcloneManifestReader.TrimForLog(error.ToString())}");
+                        }
                     }
-                    process.WaitForExit(); // Drain asynchronous output before reading the result.
-                    lock (logGate)
+                    finally
                     {
-                        return process.ExitCode == 0
-                            ? RcloneCopyResult.Success(RcloneManifestReader.TrimForLog(output.ToString()))
-                            : RcloneCopyResult.Fail($"rclone {command} failed with exit code {process.ExitCode}: {RcloneManifestReader.TrimForLog(error.ToString())}");
+                        // Disposing Process alone does not stop an already-started child.
+                        if (!process.HasExited) TryStop(process);
                     }
                 }
             }

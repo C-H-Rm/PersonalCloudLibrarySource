@@ -239,6 +239,38 @@ class Program
             catch (InvalidOperationException) { refused = true; }
             Check(refused, "unsafe root was accepted");
         });
+        Test("uninstall revalidates a path changed by the actual pause hook", () =>
+        {
+            using var f = new Fixture();
+            var external = Path.Combine(Path.GetTempPath(), "pcls-uninstall-external-" + Guid.NewGuid().ToString("N"));
+            var backup = f.Folder + ".original";
+            Directory.CreateDirectory(external); File.WriteAllText(Path.Combine(external, "keep.bin"), "keep");
+            bool linked = false;
+            try
+            {
+                var c = f.Controller(() =>
+                {
+                    f.Paused++; Directory.Move(f.Folder, backup);
+                    if (OperatingSystem.IsWindows())
+                    {
+                        using var process = Process.Start(new ProcessStartInfo("cmd.exe", "/c mklink /J \"" + f.Folder + "\" \"" + external + "\"") { UseShellExecute = false, CreateNoWindow = true });
+                        process.WaitForExit(); Check(process.ExitCode == 0, "junction fixture could not be created");
+                    }
+                    else Directory.CreateSymbolicLink(f.Folder, external);
+                    linked = true;
+                });
+                c.Uninstalled = () => f.Completed++;
+                c.Uninstall(new UninstallActionArgs()); context.Until(() => !f.Game.IsUninstalling);
+                Check(linked && f.Paused == 1 && f.Completed == 0 && f.Game.IsInstalled, "unsafe uninstall was completed or pause not exercised");
+                Check(File.ReadAllText(Path.Combine(external, "keep.bin")) == "keep", "external data was deleted after pause");
+            }
+            finally
+            {
+                if (linked && Directory.Exists(f.Folder)) Directory.Delete(f.Folder, false);
+                if (Directory.Exists(backup)) Directory.Move(backup, f.Folder);
+                if (Directory.Exists(external)) Directory.Delete(external, true);
+            }
+        });
         Console.WriteLine($"RESULT Cache controllers: {passed} passed, {failed} failed");
         return failed == 0 ? 0 : 1;
     }

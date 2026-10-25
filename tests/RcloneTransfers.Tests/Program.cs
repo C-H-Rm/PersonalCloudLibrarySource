@@ -98,6 +98,39 @@ internal static class Program
             }
             finally { Environment.SetEnvironmentVariable("RCLONE_BWLIMIT", previous); }
         });
+        Test("watchdog follows real progress rather than total elapsed time", f =>
+        {
+            var clock = new RcloneActivityTimeout(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10));
+            clock.ObserveLine("{\"stats\":{\"bytes\":1}}", TimeSpan.FromSeconds(4));
+            clock.ObserveLine("{\"stats\":{\"bytes\":2}}", TimeSpan.FromSeconds(12));
+            clock.ObserveLine("{\"stats\":{\"bytes\":3}}", TimeSpan.FromSeconds(20));
+            Check(clock.GetExpiredKind(TimeSpan.FromSeconds(29)) == RcloneTimeoutKind.None, "active transfer expired");
+            Check(clock.GetExpiredKind(TimeSpan.FromSeconds(30)) == RcloneTimeoutKind.Inactivity, "inactivity boundary wrong");
+        });
+        Test("watchdog ignores changing nested per-file counters and error text", f =>
+        {
+            var clock = new RcloneActivityTimeout(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10));
+            clock.ObserveLine("{\"stats\":{\"bytes\":1}}", TimeSpan.Zero);
+            clock.ObserveLine("{\"stats\":{\"bytes\":1,\"transferring\":[{\"bytes\":9999}]}}", TimeSpan.FromSeconds(9));
+            clock.ObserveLine("{\"msg\":\"arbitrary status\",\"level\":\"error\"}", TimeSpan.FromSeconds(9));
+            Check(clock.GetExpiredKind(TimeSpan.FromSeconds(10)) == RcloneTimeoutKind.Inactivity, "non-progress prolonged watchdog");
+        });
+        Test("watchdog recognizes checks and progress after retry counter resets", f =>
+        {
+            var clock = new RcloneActivityTimeout(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10));
+            clock.ObserveLine("{\"stats\":{\"bytes\":100}}", TimeSpan.Zero);
+            clock.ObserveLine("{\"stats\":{\"bytes\":0}}", TimeSpan.FromSeconds(4));
+            clock.ObserveLine("{\"stats\":{\"bytes\":1}}", TimeSpan.FromSeconds(8));
+            clock.ObserveLine("{\"stats\":{\"bytes\":1,\"checks\":1}}", TimeSpan.FromSeconds(16));
+            Check(clock.GetExpiredKind(TimeSpan.FromSeconds(25)) == RcloneTimeoutKind.None, "retry/check progress was ignored");
+        });
+        Test("invalid or oversized stats cannot crash or refresh the watchdog", f =>
+        {
+            var clock = new RcloneActivityTimeout(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10));
+            foreach (var line in new[] { "not json", "{\"stats\":null}", "{\"stats\":\"wrong type\"}", "{\"stats\":{\"bytes\":9223372036854775808}}", new string('x', 70000) })
+                clock.ObserveLine(line, TimeSpan.FromSeconds(4));
+            Check(clock.GetExpiredKind(TimeSpan.FromSeconds(5)) == RcloneTimeoutKind.Connect, "invalid line prolonged startup");
+        });
         Console.WriteLine($"RESULT Rclone transfers: {passed} passed, {failed} failed");
         return failed == 0 ? 0 : 1;
     }

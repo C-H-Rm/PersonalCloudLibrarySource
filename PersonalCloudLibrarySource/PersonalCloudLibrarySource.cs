@@ -672,20 +672,6 @@ namespace PersonalCloudLibrarySource
                 .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         }
 
-        private static bool IsDriveRoot(string path)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return false;
-            }
-
-            var root = Path.GetPathRoot(path);
-            return !string.IsNullOrWhiteSpace(root) &&
-                string.Equals(
-                    path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                    root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                    StringComparison.OrdinalIgnoreCase);
-        }
 
         public static string GetItemSourcePath(PersonalCloudLibraryItem item)
         {

@@ -61,17 +61,7 @@ namespace PersonalCloudLibrarySource
                     }
 
                     beforeUninstall?.Invoke();
-                    var afterPause = deletionExecutor.Authorize(
-                        settings.LocalCacheFolder,
-                        targetPath,
-                        settings.AllowUninstallOutsideCacheFolder);
-                    if (!afterPause.Allowed)
-                    {
-                        logger.Warn($"Personal Cloud Library Source refused uninstall for {Game.GameId} after beforeUninstall: {afterPause.Reason}");
-                        return false;
-                    }
-
-                    targetPath = afterPause.TargetPath;
+                    // The executor revalidates after the pause hook and checks descendant links.
                     var deletion = deletionExecutor.Delete(
                         settings.LocalCacheFolder,
                         targetPath,
