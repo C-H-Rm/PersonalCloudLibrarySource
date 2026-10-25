@@ -72,8 +72,6 @@ Local files, external drives, mapped drives, and NAS paths do not require rclone
 
 ## Building From Source for Developers
 
-A Windows GitHub Actions workflow is available in this local candidate at `.github/workflows/build-plugin.yml`. It rebuilds, verifies and uploads a real `.pext` without publishing a release. See [GitHub Actions and local build instructions](docs/github-actions-build.md); a hosted run still requires the workflow to be pushed first.
-
 1. Build the project using **Debug Any CPU**.
 2. Add the build output folder as a Playnite external extension:
 
@@ -272,10 +270,6 @@ The `playnite-addon/` folder is kept for release maintenance and add-on database
 `AddonId` must continue to match `PersonalCloudLibrarySource/extension.yaml` exactly. The repository and release assets must remain public so Playnite's add-on browser can install and update the package correctly.
 
 ## Roadmap
-
-### Private candidate: optional two-way mod sync
-
-The local 0.1.2 candidate adds an optional `modPath` per game and a separately stored cloud folder at `RcloneContentRoot/mods/<game name>`. Additions, changes and deletions sync both ways before play, after play and from the game menu. The feature is off by default. See [setup, safeguards, reinstall flow and test limits](docs/mod-sync.md). This candidate is not a published release.
 
 - Improve setup guidance and first-run user experience.
 - Add stronger manifest validation and friendlier error messages.
