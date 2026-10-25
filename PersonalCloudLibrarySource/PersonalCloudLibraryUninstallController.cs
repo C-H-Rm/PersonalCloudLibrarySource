@@ -18,6 +18,7 @@ namespace PersonalCloudLibrarySource
         private readonly PersonalCloudLibraryItem item;
         private readonly PersonalCloudLibrarySourceSettings settings;
         private readonly Action beforeUninstall;
+        private readonly SafeCacheDeletionExecutor deletionExecutor = new SafeCacheDeletionExecutor();
 
         public PersonalCloudLibraryUninstallController(
             IPlayniteAPI playniteApi,
@@ -60,13 +61,27 @@ namespace PersonalCloudLibrarySource
                     }
 
                     beforeUninstall?.Invoke();
-                    if (File.Exists(targetPath)) File.Delete(targetPath);
-                    else if (Directory.Exists(targetPath)) Directory.Delete(targetPath, recursive: true);
-                    else
+                    var afterPause = deletionExecutor.Authorize(
+                        settings.LocalCacheFolder,
+                        targetPath,
+                        settings.AllowUninstallOutsideCacheFolder);
+                    if (!afterPause.Allowed)
                     {
-                        logger.Info($"Personal Cloud Library Source uninstall skipped for {Game.GameId}: cached target does not exist.");
+                        logger.Warn($"Personal Cloud Library Source refused uninstall for {Game.GameId} after beforeUninstall: {afterPause.Reason}");
                         return false;
                     }
+
+                    targetPath = afterPause.TargetPath;
+                    var deletion = deletionExecutor.Delete(
+                        settings.LocalCacheFolder,
+                        targetPath,
+                        settings.AllowUninstallOutsideCacheFolder);
+                    if (!deletion.Allowed)
+                    {
+                        logger.Info($"Personal Cloud Library Source uninstall skipped for {Game.GameId}: {deletion.Reason}.");
+                        return false;
+                    }
+
                     return true;
                 });
                 if (!deleted) return;

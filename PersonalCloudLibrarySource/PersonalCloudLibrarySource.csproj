@@ -65,6 +65,7 @@
     <Compile Include="RcloneFileCopier.cs" />
     <Compile Include="RcloneInstallController.cs" />
     <Compile Include="RcloneManifestReader.cs" />
+    <Compile Include="SafeCacheDeletionPolicy.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="extension.yaml">

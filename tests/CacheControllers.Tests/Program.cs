@@ -348,7 +348,7 @@ namespace PersonalCloudLibrarySource
     public class PersonalCloudLibrarySourceSettings
     {
         public const string AskEachTimeUninstallBehavior = "ask", RemoveCachedFileOnlyUninstallBehavior = "file", RemoveCachedInstallFolderUninstallBehavior = "folder";
-        public string UninstallBehavior = "folder", LocalCacheFolder; public bool Refuse;
+        public string UninstallBehavior = "folder", LocalCacheFolder; public bool Refuse, AllowUninstallOutsideCacheFolder;
         public const string RcloneRemoteProviderType = "rclone";
         public string ProviderType = "rclone";
         public bool Enabled = true, EnableModSync = true;
