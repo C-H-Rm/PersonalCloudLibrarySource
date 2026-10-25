@@ -262,6 +262,17 @@
                        TextWrapping="Wrap"
                        Margin="22,0,0,16"/>
 
+            <TextBlock Text="Optional two-way mod synchronization"
+                       FontSize="15" FontWeight="Bold" Margin="0,0,0,10"/>
+            <CheckBox Content="Enable mod sync before play, after play, and from the game menu"
+                      IsChecked="{Binding Settings.EnableModSync}" Margin="0,0,0,6"/>
+            <TextBlock Text="RcloneRemote only. Entries need modPath in the manifest. Mods sync separately to Rclone content root / mods / game name, including deletions. First linkage and clearing an entire mod folder require confirmation. Missing folders pause sync rather than erasing cloud mods."
+                       TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,10"/>
+            <TextBlock Text="Mod sync timeout (seconds, separate from manifest/copy timeout):"
+                       FontWeight="SemiBold" Margin="0,0,0,4"/>
+            <TextBox Text="{Binding Settings.ModSyncTimeoutSeconds, UpdateSourceTrigger=PropertyChanged}"
+                     MinWidth="120" Margin="0,0,0,16"/>
+
             <TextBlock Text="Tools"
                        FontSize="15"
                        FontWeight="Bold"

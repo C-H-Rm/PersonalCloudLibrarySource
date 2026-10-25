@@ -9,7 +9,7 @@ using System.Windows.Controls;
 
 namespace PersonalCloudLibrarySource
 {
-    public class PersonalCloudLibrarySource : LibraryPlugin
+    public partial class PersonalCloudLibrarySource : LibraryPlugin
     {
         private static readonly ILogger logger = LogManager.GetLogger();
         private readonly RcloneManifestReader rcloneManifestReader = new RcloneManifestReader();
@@ -61,6 +61,7 @@ namespace PersonalCloudLibrarySource
                 var manifest = ParseManifest(json);
                 diagnostics.Add($"itemCount={manifest.Items.Count}");
                 importedGames = ConvertManifestItemsToGameMetadata(manifest, pluginSettings, diagnostics);
+                CacheModManifest(json);
                 diagnostics.Add($"returnedGameCount={importedGames.Count}");
             }
             catch (Exception ex)
@@ -228,7 +229,8 @@ namespace PersonalCloudLibrarySource
                         return uninstallActions;
                     }
 
-                    uninstallActions.Add(new PersonalCloudLibraryUninstallController(playniteApi, args.Game, item, pluginSettings));
+                    uninstallActions.Add(new PersonalCloudLibraryUninstallController(playniteApi, args.Game, item, pluginSettings,
+                        () => PauseModSync(item.Id)));
                     logger.Info($"Personal Cloud Library Source uninstall action returned for {item.Id}.");
                     return uninstallActions;
                 }
@@ -989,5 +991,7 @@ namespace PersonalCloudLibrarySource
         public string CachePath { get; set; }
         public string RemotePath { get; set; }
         public string Notes { get; set; }
+        public string ModPath { get; set; }
+        public string ModFolder { get; set; }
     }
 }

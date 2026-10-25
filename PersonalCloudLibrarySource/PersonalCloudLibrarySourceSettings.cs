@@ -37,6 +37,20 @@ namespace PersonalCloudLibrarySource
         private bool enableDiagnostics = true;
         private string uninstallBehavior = RemoveCachedInstallFolderUninstallBehavior;
         private bool allowUninstallOutsideCacheFolder = false;
+        private bool enableModSync = false;
+        private int modSyncTimeoutSeconds = 1800;
+
+        public bool EnableModSync
+        {
+            get => enableModSync;
+            set => SetValue(ref enableModSync, value);
+        }
+
+        public int ModSyncTimeoutSeconds
+        {
+            get => modSyncTimeoutSeconds;
+            set => SetValue(ref modSyncTimeoutSeconds, value);
+        }
 
         public bool Enabled
         {

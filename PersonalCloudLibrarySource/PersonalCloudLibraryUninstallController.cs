@@ -14,16 +14,19 @@ namespace PersonalCloudLibrarySource
         private readonly IPlayniteAPI playniteApi;
         private readonly PersonalCloudLibraryItem item;
         private readonly PersonalCloudLibrarySourceSettings settings;
+        private readonly Action beforeUninstall;
 
         public PersonalCloudLibraryUninstallController(
             IPlayniteAPI playniteApi,
             Game game,
             PersonalCloudLibraryItem item,
-            PersonalCloudLibrarySourceSettings settings) : base(game)
+            PersonalCloudLibrarySourceSettings settings,
+            Action beforeUninstall = null) : base(game)
         {
             this.playniteApi = playniteApi;
             this.item = item;
             this.settings = settings;
+            this.beforeUninstall = beforeUninstall;
             Name = "Remove cached copy";
         }
 
@@ -54,6 +57,7 @@ namespace PersonalCloudLibrarySource
 
             try
             {
+                beforeUninstall?.Invoke();
                 if (File.Exists(targetPath))
                 {
                     File.Delete(targetPath);
