@@ -44,6 +44,8 @@ New manifests should use `sourcePath` instead of `remotePath`.
 - `launchFile`: Launch file name used with `installDirectory`, and useful as a clear launch-file hint with `cachePath`.
 - `remotePath`: Legacy fallback for `sourcePath`.
 - `notes`: Optional text imported as the Playnite description.
+- `modPath`: Optional local mod directory, relative to the game installation or an explicit absolute local path. Requires the opt-in mod sync setting and RcloneRemote provider.
+- `modFolder`: Optional stable single cloud folder name under `RcloneContentRoot/mods/`; defaults to the sanitized game title. See [two-way mod sync](mod-sync.md) for deletion behavior and first-link/reinstall requirements.
 
 ## Path Resolution
 

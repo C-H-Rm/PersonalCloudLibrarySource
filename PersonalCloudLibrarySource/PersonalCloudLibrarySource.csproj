@@ -50,6 +50,9 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="LocalFileCopier.cs" />
+    <Compile Include="ModSyncService.cs" />
+    <Compile Include="ModSyncProcess.cs" />
+    <Compile Include="ModSyncIntegration.cs" />
     <Compile Include="PersonalCloudLibrarySourceClient.cs" />
     <Compile Include="PersonalCloudLibrarySource.cs" />
     <Compile Include="PersonalCloudLibrarySourceSettings.cs" />
@@ -89,4 +92,13 @@
     </Page>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <!-- Compile XAML explicitly: a C#-only build leaves InitializeComponent undefined. -->
+  <PropertyGroup>
+    <WinFxTargetsPath Condition="Exists('$(MSBuildToolsPath)\Microsoft.WinFX.targets')">$(MSBuildToolsPath)\Microsoft.WinFX.targets</WinFxTargetsPath>
+    <WinFxTargetsPath Condition="'$(WinFxTargetsPath)' == '' And Exists('$(MSBuildSDKsPath)\Microsoft.NET.Sdk.WindowsDesktop\targets\Microsoft.WinFX.targets')">$(MSBuildSDKsPath)\Microsoft.NET.Sdk.WindowsDesktop\targets\Microsoft.WinFX.targets</WinFxTargetsPath>
+  </PropertyGroup>
+  <Import Project="$(WinFxTargetsPath)" Condition="'$(WinFxTargetsPath)' != ''" />
+  <Target Name="RequireWpfBuildTools" BeforeTargets="PrepareForBuild" Condition="'$(WinFxTargetsPath)' == ''">
+    <Error Text="WPF build targets are required. Install Visual Studio .NET desktop build tools or a .NET SDK containing WindowsDesktop targets." />
+  </Target>
 </Project>

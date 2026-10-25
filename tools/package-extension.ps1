@@ -11,8 +11,12 @@ $configuration = "Release"
 $projectOutput = Join-Path $repoRoot "PersonalCloudLibrarySource\bin\$configuration"
 $distRoot = Join-Path $repoRoot "dist"
 $packageFolder = Join-Path $distRoot "PersonalCloudLibrarySource"
-$packagePath = Join-Path $distRoot "PersonalCloudLibrarySource-0.1.1.pext"
-$debugPackagePath = Join-Path $distRoot "PersonalCloudLibrarySource-0.1.1-debug-symbols.zip"
+$extensionManifest = Join-Path $repoRoot "PersonalCloudLibrarySource\extension.yaml"
+$versionLine = Get-Content -LiteralPath $extensionManifest | Where-Object { $_ -match '^Version:\s*([0-9.]+)\s*$' } | Select-Object -First 1
+if (-not $versionLine) { throw "Extension Version is missing." }
+$version = ($versionLine -replace '^Version:\s*', '').Trim()
+$packagePath = Join-Path $distRoot "PersonalCloudLibrarySource-$version.pext"
+$debugPackagePath = Join-Path $distRoot "PersonalCloudLibrarySource-$version-debug-symbols.zip"
 
 if (-not (Test-Path -LiteralPath $msbuild)) {
     throw "MSBuild was not found at $msbuild"

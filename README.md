@@ -271,6 +271,10 @@ The `playnite-addon/` folder is kept for release maintenance and add-on database
 
 ## Roadmap
 
+### Private candidate: optional two-way mod sync
+
+The local 0.1.2 candidate adds an optional `modPath` per game and a separately stored cloud folder at `RcloneContentRoot/mods/<game name>`. Additions, changes and deletions sync both ways before play, after play and from the game menu. The feature is off by default. See [setup, safeguards, reinstall flow and test limits](docs/mod-sync.md). This candidate is not a published release.
+
 - Improve setup guidance and first-run user experience.
 - Add stronger manifest validation and friendlier error messages.
 - Add cache verification and optional hash checks.
