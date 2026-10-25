@@ -60,7 +60,7 @@ namespace PersonalCloudLibrarySource
             var initialized = File.Exists(readyFile);
 
             var help = Require(r, "bisync", "--help").Output;
-            if (!help.Contains("--recover") || !help.Contains("--conflict-resolve") || !help.Contains("--check-filename"))
+            if (!help.Contains("--recover") || !help.Contains("--conflict-resolve") || !help.Contains("--check-filename") || !help.Contains("--download-hash"))
                 throw new InvalidOperationException("This rclone version lacks required bisync safety options. Update rclone before linking mods.");
 
             if (File.Exists(pairFile))
@@ -105,9 +105,9 @@ namespace PersonalCloudLibrarySource
             var localCount = Directory.GetFiles(r.LocalFolder, "*", SearchOption.AllDirectories)
                 .Count(path => !string.Equals(Path.GetFullPath(path), Path.GetFullPath(localMarker), StringComparison.OrdinalIgnoreCase));
             var remoteCount = remoteFiles.Count(path => path != markerName);
-            var countFile = Path.Combine(r.StateDirectory, "last-file-count");
-            var previousCount = File.Exists(countFile) ? int.Parse(File.ReadAllText(countFile)) : 1;
-            if (initialized && previousCount > 0 && ((localCount == 0 && remoteCount > 0) || (remoteCount == 0 && localCount > 0)))
+            // Never trust a separately persisted count: a crash can leave it stale.
+            // Conservatively confirm every non-initial empty-vs-populated pairing.
+            if (initialized && ((localCount == 0 && remoteCount > 0) || (remoteCount == 0 && localCount > 0)))
             {
                 if (!confirm("One tracked mod folder is now empty. Synchronization may remove all remaining mods on the other side. Continue?\n\nLocal: " + r.LocalFolder + "\nCloud: " + r.RemoteFolder))
                     return Declined();
@@ -117,6 +117,7 @@ namespace PersonalCloudLibrarySource
             {
                 "bisync", r.LocalFolder, r.RemoteFolder,
                 "--workdir", workDirectory, "--check-access", "--check-filename", markerName,
+                "--compare", "size,modtime,checksum", "--download-hash",
                 "--conflict-resolve", "none", "--conflict-loser", "num", "--conflict-suffix", "pcls-conflict",
                 "--max-delete", "100", "--resilient", "--recover", "--verbose"
             };
@@ -126,8 +127,6 @@ namespace PersonalCloudLibrarySource
             if (sync.ExitCode != 0)
                 throw new InvalidOperationException("Mod sync failed. Baseline and diagnostics are retained; no automatic --resync was attempted.\n" + sync.Log);
             File.WriteAllText(readyFile, "ready");
-            File.WriteAllText(countFile, Directory.GetFiles(r.LocalFolder, "*", SearchOption.AllDirectories)
-                .Count(path => !string.Equals(Path.GetFullPath(path), Path.GetFullPath(localMarker), StringComparison.OrdinalIgnoreCase)).ToString());
             var conflicts = sync.Log.IndexOf("pcls-conflict", StringComparison.OrdinalIgnoreCase) >= 0 ||
                 sync.Log.IndexOf("New or changed in both paths", StringComparison.OrdinalIgnoreCase) >= 0;
             return new ModSyncResult
@@ -171,10 +170,24 @@ namespace PersonalCloudLibrarySource
                         Directory.Move(request.StateDirectory, request.StateDirectory + ".archive-" + Guid.NewGuid().ToString("N"));
                     Directory.CreateDirectory(request.LocalFolder);
                     Directory.CreateDirectory(request.StateDirectory);
-                    return SynchronizeLocked(request, confirm);
+                    // The relink confirmation already covers this initial merge.
+                    return SynchronizeLocked(request, _ => true);
                 }
             }
             catch (Exception ex) { return new ModSyncResult { Success = false, Message = ex.Message }; }
+        }
+
+        public static ModSyncRequest RequireCurrentMapping(ModSyncRequest imported, Func<ModSyncRequest> loadCurrent)
+        {
+            // Exceptions/offline errors propagate before any sync command is run.
+            var current = loadCurrent();
+            if (current == null || imported == null ||
+                !string.Equals(current.GameId, imported.GameId, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(Path.GetFullPath(current.LocalFolder), Path.GetFullPath(imported.LocalFolder), StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(Path.GetFullPath(current.LaunchFile), Path.GetFullPath(imported.LaunchFile), StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(current.RemoteFolder, imported.RemoteFolder, StringComparison.Ordinal))
+                throw new InvalidOperationException("The live mod mapping differs from the imported mapping. Update the game library and explicitly relink changed paths before syncing.");
+            return current;
         }
 
         private static ModSyncResult Declined() => new ModSyncResult { Success = false, Message = "Mod sync cancelled; game launch requires an explicit decision." };

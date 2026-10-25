@@ -97,10 +97,46 @@ internal static class Program
             Check(!f.Service.Synchronize(f.Request, _ => true).Success, "base game directory allowed");
         });
         Test("empty initial mod folders can be linked", f => { f.Sync(); });
-        Test("first addition after empty baseline needs no clear confirmation", f => {
+        Test("empty-side synchronization conservatively asks even for a new addition", f => {
             f.Sync(); f.Local("first", "first");
-            var result = f.Service.Synchronize(f.Request, _ => throw new Exception("unexpected confirmation"));
-            Check(result.Success && File.Exists(f.Remote("first")), result.Message);
+            var asked = false;
+            var result = f.Service.Synchronize(f.Request, _ => { asked = true; return false; });
+            Check(asked && !result.Success && !File.Exists(f.Remote("first")), "empty-side guard bypassed");
+            f.Sync(); Check(File.Exists(f.Remote("first")), "approved addition missing");
+        });
+        Test("stale persisted count cannot bypass whole-clear confirmation", f => {
+            f.Sync(); f.Local("a", "a"); f.Sync();
+            File.WriteAllText(System.IO.Path.Combine(f.Request.StateDirectory, "last-file-count"), "0");
+            File.Delete(f.Path("a")); var asked = false;
+            var result = f.Service.Synchronize(f.Request, _ => { asked = true; return false; });
+            Check(asked && !result.Success && File.Exists(f.Remote("a")), "stale count bypassed confirmation");
+        });
+        Test("same-size same-time local edits are detected by checksum", f => {
+            f.Local("mod", "aaaa"); f.Sync(); var stamp = File.GetLastWriteTimeUtc(f.Path("mod"));
+            File.WriteAllText(f.Path("mod"), "bbbb"); File.SetLastWriteTimeUtc(f.Path("mod"), stamp); f.Sync();
+            Check(File.ReadAllText(f.Remote("mod")) == "bbbb", "same-metadata local edit missed");
+        });
+        Test("same-size same-time cloud edits are detected by checksum", f => {
+            f.Local("mod", "aaaa"); f.Sync(); var stamp = File.GetLastWriteTimeUtc(f.Remote("mod"));
+            File.WriteAllText(f.Remote("mod"), "bbbb"); File.SetLastWriteTimeUtc(f.Remote("mod"), stamp); f.Sync();
+            Check(File.ReadAllText(f.Path("mod")) == "bbbb", "same-metadata cloud edit missed");
+        });
+        Test("fresh mapping lookup failure pauses before sync", f => {
+            f.Local("a", "a"); var blocked = false;
+            try { ModSyncService.RequireCurrentMapping(f.Request, () => throw new IOException("manifest offline")); }
+            catch (IOException) { blocked = true; }
+            Check(blocked && !File.Exists(f.Remote("a")), "offline manifest allowed stale sync");
+        });
+        Test("changed live mod mapping is refused", f => {
+            var changed = new ModSyncRequest { GameId = f.Request.GameId, LaunchFile = f.Request.LaunchFile,
+                LocalFolder = f.LocalRoot + "-new", RemoteFolder = f.Request.RemoteFolder };
+            var blocked = false;
+            try { ModSyncService.RequireCurrentMapping(f.Request, () => changed); }
+            catch (InvalidOperationException) { blocked = true; }
+            Check(blocked, "changed live mapping accepted");
+        });
+        Test("unchanged freshly loaded mapping is accepted", f => {
+            Check(ModSyncService.RequireCurrentMapping(f.Request, () => f.Request) == f.Request, "fresh mapping refused");
         });
         Test("pause after uninstall prevents sync even if mod folder still exists", f => {
             f.Local("a", "a"); f.Sync(); f.Service.Pause(f.Request.StateDirectory); File.Delete(f.Path("a"));

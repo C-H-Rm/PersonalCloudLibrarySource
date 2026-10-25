@@ -31,7 +31,7 @@ Add these optional fields to an existing manifest item:
 - `modFolder`: optional stable, single cloud folder name under `mods`. Defaults to the title with Windows-invalid characters replaced by underscores. Set it explicitly to avoid changing the cloud location when renaming a game, and to distinguish editions with the same title. Colliding destinations are refused.
 - No `modPath`: existing import/download/launch behavior is unchanged; no mod sync.
 - In plugin settings, enable **Optional two-way mod synchronization**. Its timeout is separate from the existing manifest/copy timeout; default 1800 seconds.
-- Update the Playnite library after changing the manifest. Mod actions use the locally cached last-good imported manifest, avoiding network reads merely to open menus. Provider settings and game mappings must match the retained pairing.
+- Update the Playnite library after changing the manifest. The local imported manifest identifies opt-in games without network reads merely to open menus. Every actual mod operation loads the live manifest and verifies its local/cloud/launch mapping against that imported configuration. Offline or changed live mappings pause sync before any mod write. Provider settings and game mappings must also match the retained pairing.
 
 ## First link and normal use
 
@@ -49,6 +49,7 @@ This is event-based, not real-time background sync. Close the game before manual
 
 - Removing an individual local mod file removes its cloud counterpart on the next sync. The reverse also works.
 - Clearing all tracked user files while retaining the folder and marker requires confirmation before propagating that change. Cancelling leaves the other side untouched.
+- The empty-side check is deliberately conservative and never trusts a separately stored file count. It also asks when adding a first file to an already-linked empty pair, since one side is then empty. This extra confirmation protects against stale state after a crash.
 - Missing local folder/marker, missing cloud marker, missing launch file or offline errors pause sync instead of interpreting the problem as a deletion.
 - Changes to the same file on both sides are preserved with `pcls-conflict` suffixes and reported. Inspect the files before playing: a conflict copy is not automatically a valid mod configuration.
 - The plugin pauses mod sync before uninstall removes cached game files. Cloud mods are preserved.
@@ -59,13 +60,14 @@ This is event-based, not real-time background sync. Close the game before manual
 
 The implementation uses rclone bisync with access checks, local operation locking, retained state, conflict copies and recovery flags. Required flags are checked before linking. Tested with rclone 1.75.2; use a compatible current rclone binary. The feature does not change rclone credentials.
 
-Normal bisync compares the metadata supported by rclone's default comparison; this is not a complete byte-for-byte verification of every mod on every run. Initial common-file comparison uses `rclone check --download`. Whole-folder deletion confirmation is additional to marker/installation checks; it is not a backup system. Use existing Nextcloud recovery/backup facilities as appropriate.
+Bisync compares size, modification time and checksums, with downloaded hashes when a backend lacks native checksums. This detects same-size/same-time binary changes, but a backend without hashes can require downloading mod files for comparison and make pre-launch checks slower. Initial common-file comparison uses `rclone check --download`. Whole-folder deletion confirmation is additional to marker/installation checks; it is not a backup system. Use existing Nextcloud recovery/backup facilities as appropriate.
 
 Files only: empty subdirectory structure is not guaranteed to replicate. Absolute external mod folders are intentionally supported, but must be a dedicated mod folder, not your whole user directory or a mod manager's shared multi-game store. Mod paths that overlap another configured game's mod directory or encompass any game launch file are refused. Bases whose cloud source overlaps the cloud mod destination are refused.
 
 ## Verified locally / still to check
 
 - Real rclone tests use two isolated local endpoints, never CHR's Nextcloud or game library.
+- A separate integration suite runs against an actual disposable loopback WebDAV server. This tests HTTP/WebDAV transfer, not a real Nextcloud installation.
 - The complete .NET Framework 4.8 plugin, including generated WPF XAML resources, is built against Playnite SDK 6.16.0.
 - Windows Playnite runtime behavior, rendered settings/dialogs, and the real Nextcloud/WebDAV endpoint have not yet been exercised. Use a disposable mod test folder first; do not interpret a successful cross-build as a Windows UI test.
 
@@ -73,6 +75,12 @@ Test command (requires .NET 8 SDK and rclone on PATH, or `PCLS_RCLONE` set to it
 
 ```text
 dotnet run --project tests/ModSync.Tests/ModSync.Tests.csproj
+```
+
+Optional loopback WebDAV suite (Python 3, .NET 8 and rclone; executable overrides `PCLS_DOTNET` and `PCLS_RCLONE`):
+
+```text
+python tests/ModSync.WebDav.Tests/run.py
 ```
 
 Windows acceptance checks: import a disposable item with/without modPath; enable the setting; manually link; add/update/delete mods both ways; clear contents and cancel/confirm; verify start waits for sync; verify stop triggers sync; cancel a failed launch; uninstall/reinstall and explicitly relink; confirm cloud base game stays unchanged. Exercise two PCs sequentially and a deliberately offline endpoint.

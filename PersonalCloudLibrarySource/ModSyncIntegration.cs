@@ -69,8 +69,12 @@ namespace PersonalCloudLibrarySource
             {
                 if (game.IsRunning && !justStopped)
                     throw new InvalidOperationException("Close the game before synchronizing mods.");
-                var json = File.Exists(ModManifestPath) ? File.ReadAllText(ModManifestPath) : LoadManifestJson(s);
-                var manifest = ParseManifest(json);
+                if (!File.Exists(ModManifestPath))
+                {
+                    if (manual) ShowModMessage("Update the game library first to import its optional mod configuration.");
+                    return null;
+                }
+                var manifest = ParseManifest(File.ReadAllText(ModManifestPath));
                 var matches = manifest.Items.Where(i => i != null && string.Equals(i.Id, game.GameId, StringComparison.OrdinalIgnoreCase)).ToList();
                 if (matches.Count != 1) throw new InvalidOperationException("Game is missing or duplicated in the manifest. Update the library before mod sync.");
                 var item = matches[0];
@@ -84,12 +88,39 @@ namespace PersonalCloudLibrarySource
                 var request = BuildModSyncRequest(item, manifest, s);
                 result = OnModUi(() =>
                 {
-                    ModSyncResult completed = null;
-                    playniteApi.Dialogs.ActivateGlobalProgress((GlobalProgressActionArgs progress) =>
+                    var approvals = new HashSet<string>(StringComparer.Ordinal);
+                    while (true)
                     {
-                        completed = relink ? modSyncService.Relink(request, ConfirmModSync) : modSyncService.Synchronize(request, ConfirmModSync);
-                    }, new GlobalProgressOptions("Synchronizing mods: " + game.Name) { IsIndeterminate = true, Cancelable = false });
-                    return completed ?? new ModSyncResult { Success = false, Message = "Mod sync did not complete." };
+                        ModSyncResult completed = null;
+                        string pendingConfirmation = null;
+                        playniteApi.Dialogs.ActivateGlobalProgress((GlobalProgressActionArgs progress) =>
+                        {
+                            try
+                            {
+                                var current = ModSyncService.RequireCurrentMapping(request, () =>
+                                {
+                                    var live = ParseManifest(LoadManifestJson(s));
+                                    var found = live.Items.Where(i => i != null && string.Equals(i.Id, game.GameId, StringComparison.OrdinalIgnoreCase)).ToList();
+                                    if (found.Count != 1 || string.IsNullOrWhiteSpace(found[0].ModPath))
+                                        throw new InvalidOperationException("The live mod configuration changed. Update the library before synchronizing.");
+                                    return BuildModSyncRequest(found[0], live, s);
+                                });
+                                Func<string, bool> confirm = message =>
+                                {
+                                    if (approvals.Contains(message)) return true;
+                                    pendingConfirmation = message;
+                                    return false;
+                                };
+                                completed = relink ? modSyncService.Relink(current, confirm) : modSyncService.Synchronize(current, confirm);
+                            }
+                            catch (Exception ex) { completed = new ModSyncResult { Success = false, Message = ex.Message }; }
+                        }, new GlobalProgressOptions("Synchronizing mods: " + game.Name) { IsIndeterminate = true, Cancelable = false });
+                        // Close global progress BEFORE showing a confirmation dialog.
+                        // The worker never synchronously dispatches a modal dialog.
+                        if (pendingConfirmation == null || !ConfirmModSync(pendingConfirmation))
+                            return completed ?? new ModSyncResult { Success = false, Message = "Mod sync did not complete." };
+                        approvals.Add(pendingConfirmation);
+                    }
                 });
             }
             catch (Exception ex) { result = new ModSyncResult { Success = false, Message = ex.Message }; }
