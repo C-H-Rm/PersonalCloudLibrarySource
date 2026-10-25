@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - PersonalCloudLibrarySource/**
+      - tests/CacheControllers.Tests/**
       - tools/package-extension.ps1
       - tools/verify-package.ps1
       - tools/test-package-extension.ps1
@@ -16,6 +17,7 @@ on:
     branches: [main]
     paths:
       - PersonalCloudLibrarySource/**
+      - tests/CacheControllers.Tests/**
       - tools/package-extension.ps1
       - tools/verify-package.ps1
       - tools/test-package-extension.ps1
@@ -51,6 +53,9 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 8.0.x
+
+      - name: Test async cache controllers
+        run: dotnet run --project tests/CacheControllers.Tests/CacheControllers.Tests.csproj --configuration Release
 
       - name: Build, package and inspect Playnite plugin
         id: package
