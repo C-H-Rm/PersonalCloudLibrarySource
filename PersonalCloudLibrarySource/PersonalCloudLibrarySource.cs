@@ -992,6 +992,5 @@ namespace PersonalCloudLibrarySource
         public string RemotePath { get; set; }
         public string Notes { get; set; }
         public string ModPath { get; set; }
-        public string ModFolder { get; set; }
     }
 }

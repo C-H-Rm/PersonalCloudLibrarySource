@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using Playnite.SDK;
 using Playnite.SDK.Models;
@@ -172,6 +173,72 @@ class Program
             f.Run(context);
             Check(stored.IsInstalled && !stored.IsUninstalling, "host record left busy");
         });
+        foreach (var path in new string[] { null, "", "   ", "\t\r\n", "Mods", @"D:\Mods\Game" })
+        Test("mod menu requires nonblank modPath: " + (path ?? "null"), () =>
+        {
+            using var f = new Fixture();
+            var plugin = f.MenuPlugin(System.Text.Json.JsonSerializer.Serialize(new { items = new[] { new { id = "test", modPath = path } } }));
+            var menu = plugin.GetGameMenuItems(new GetGameMenuItemsArgs { Games = new[] { f.Game } }).ToList();
+            Check(menu.Count == (string.IsNullOrWhiteSpace(path) ? 0 : 2), "wrong menu visibility");
+            Check(plugin.SyncCalls == 0, "opening menu triggered synchronization");
+            if (menu.Count == 2)
+            {
+                menu[0].Action(null); Check(plugin.SyncCalls == 1 && !plugin.Relink, "wrong sync action");
+                menu[1].Action(null); Check(plugin.SyncCalls == 2 && plugin.Relink, "wrong relink action");
+            }
+        });
+        foreach (var json in new[] { "{}", "{broken", "{\"items\":[]}", "{\"items\":[null]}", "{\"items\":[{\"id\":\"other\",\"modPath\":\"Mods\"}]}", "{\"items\":[{\"id\":\"test\",\"modPath\":\"Mods\"},{\"id\":\"TEST\",\"modPath\":\"Mods\"}]}" })
+        Test("invalid or ambiguous cached mod configuration hides menu: " + json, () =>
+        {
+            using var f = new Fixture(); var plugin = f.MenuPlugin(json);
+            Check(!plugin.GetGameMenuItems(new GetGameMenuItemsArgs { Games = new[] { f.Game } }).Any(), "invalid cache exposed mod actions");
+        });
+        Test("missing cache hides mod actions without a cloud read", () =>
+        {
+            using var f = new Fixture(); var plugin = f.MenuPlugin("{\"items\":[]}"); File.Delete(plugin.ModManifestPath);
+            Check(!plugin.GetGameMenuItems(new GetGameMenuItemsArgs { Games = new[] { f.Game } }).Any(), "missing cache exposed menu");
+        });
+        Test("disabled plugin or mod sync hides configured mod actions", () =>
+        {
+            using var f = new Fixture(); var plugin = f.MenuPlugin("{\"items\":[{\"id\":\"test\",\"modPath\":\"Mods\"}]}");
+            var menuArgs = new GetGameMenuItemsArgs { Games = new[] { f.Game } };
+            plugin.settings.Settings.Enabled = false;
+            Check(!plugin.GetGameMenuItems(menuArgs).Any(), "disabled plugin exposed actions");
+            plugin.settings.Settings.Enabled = true; plugin.settings.Settings.EnableModSync = false;
+            Check(!plugin.GetGameMenuItems(menuArgs).Any(), "disabled mod sync exposed actions");
+        });
+        Test("only a single owned game can expose mod actions", () =>
+        {
+            using var f = new Fixture(); var plugin = f.MenuPlugin("{\"items\":[{\"id\":\"test\",\"modPath\":\"Mods\"}]}");
+            var foreign = new Game();
+            foreach (var games in new[] { new Game[0], new[] { foreign }, new[] { f.Game, foreign }, new[] { f.Game, f.Game }, new Game[] { null } })
+                Check(!plugin.GetGameMenuItems(new GetGameMenuItemsArgs { Games = games }).Any(), "invalid selection exposed actions");
+            Check(!plugin.GetGameMenuItems(null).Any() && !plugin.GetGameMenuItems(new GetGameMenuItemsArgs()).Any(), "missing selection exposed actions");
+        });
+        Test("imported game IDs remain case insensitive", () =>
+        {
+            using var f = new Fixture(); var plugin = f.MenuPlugin("{\"items\":[null,{\"id\":\"TEST\",\"modPath\":\"Mods\"}]}");
+            Check(plugin.GetGameMenuItems(new GetGameMenuItemsArgs { Games = new[] { f.Game } }).Count() == 2, "matching entry was hidden");
+        });
+        Test("cloud mod folders use the literal manifest ID", () => {
+            Check(ModSyncService.ResolveCloudModFolder("Library/files", "skyrim-se") == "Library/files/mods/skyrim-se", "wrong ID folder");
+            Check(ModSyncService.ResolveCloudModFolder(null, "Game-ID_1") == "mods/Game-ID_1", "ID was normalized");
+            Check(ModSyncService.ResolveCloudModFolder("/Library/files/", "game-2") == "Library/files/mods/game-2", "root normalization changed");
+        });
+        foreach (var id in new[] { null, "", " ", ".", "..", "../game", "game/path", @"game\path", "game:edition", "game\"name", "game*", "game?", "game|", "game<", "game>", "game.", "game ", "game\nname", "game\u0001name" })
+        Test("unsafe game ID is refused rather than rewritten: " + (id ?? "null"), () => {
+            bool refused = false;
+            try { ModSyncService.ResolveCloudModFolder("Library/files", id); }
+            catch (InvalidOperationException) { refused = true; }
+            Check(refused, "invalid ID was accepted or silently rewritten");
+        });
+        foreach (var root in new[] { "../Library", "Library/../games", "Library/./games", "remote:games", "Library\nfiles", "Library\"files" })
+        Test("unsafe mod content root is refused: " + root, () => {
+            bool refused = false;
+            try { ModSyncService.ResolveCloudModFolder(root, "game-id"); }
+            catch (InvalidOperationException) { refused = true; }
+            Check(refused, "unsafe root was accepted");
+        });
         Console.WriteLine($"RESULT Cache controllers: {passed} passed, {failed} failed");
         return failed == 0 ? 0 : 1;
     }
@@ -194,6 +261,11 @@ class Program
         }
         public PersonalCloudLibraryUninstallController Controller(Action before = null) => new PersonalCloudLibraryUninstallController(Api, Game, Item, Settings, before ?? (() => Paused++));
         public RcloneInstallController Installer(Func<CopyResult> copy) => new RcloneInstallController(Game, Item, Settings, new RcloneFileCopier { Copy = copy }, new LocalFileCopier { Copy = copy });
+        public PersonalCloudLibrarySource.PersonalCloudLibrarySource MenuPlugin(string json)
+        {
+            var plugin = new PersonalCloudLibrarySource.PersonalCloudLibrarySource { ModManifestPath = Path.Combine(Folder, "manifest.json") };
+            Game.PluginId = plugin.Id; File.WriteAllText(plugin.ModManifestPath, json); return plugin;
+        }
         public void Run(UiContext context)
         {
             var c = Controller(); c.Uninstalled = () => Completed++;
@@ -226,13 +298,13 @@ namespace System.Windows
 }
 namespace Playnite.SDK.Models
 {
-    public class Game { public Guid Id = Guid.NewGuid(); public string GameId = "test", InstallDirectory; public bool IsInstalled, IsUninstalling, IsInstalling; public System.Collections.ObjectModel.ObservableCollection<GameAction> GameActions; }
+    public class Game { public Guid Id = Guid.NewGuid(), PluginId; public string GameId = "test", InstallDirectory; public bool IsInstalled, IsUninstalling, IsInstalling; public System.Collections.ObjectModel.ObservableCollection<GameAction> GameActions; }
     public enum GameActionType { File }
     public class GameAction { public string Name, Path, WorkingDir; public GameActionType Type; public bool IsPlayAction; }
 }
 namespace Playnite.SDK
 {
-    public class ILogger { public void Info(string s) {} public void Warn(string s) {} public void Error(Exception e, string s) {} }
+    public class ILogger { public void Info(string s) {} public void Warn(string s) {} public void Warn(Exception e, string s) {} public void Error(Exception e, string s) {} }
     public static class LogManager { public static ILogger GetLogger() => new ILogger(); }
     public class IPlayniteAPI { public Dialogs Dialogs = new Dialogs(); public Database Database = new Database(); }
     public class Database { public Games Games = new Games(); }
@@ -246,6 +318,9 @@ namespace Playnite.SDK
 }
 namespace Playnite.SDK.Plugins
 {
+    public class GetGameMenuItemsArgs { public System.Collections.Generic.IEnumerable<Game> Games; }
+    public class GameMenuItem { public string Description, MenuSection; public Action<object> Action; }
+    public abstract class LibraryPlugin { public abstract System.Collections.Generic.IEnumerable<GameMenuItem> GetGameMenuItems(GetGameMenuItemsArgs args); }
     public class UninstallActionArgs {}
     public class InstallActionArgs {}
     public class GameInstallationData { public string InstallDirectory; }
@@ -269,16 +344,29 @@ namespace Playnite.SDK.Plugins
 }
 namespace PersonalCloudLibrarySource
 {
-    public class PersonalCloudLibraryItem { public string Launch, Folder, Title = "test", Id = "test"; }
+    public class PersonalCloudLibraryItem { public string Launch, Folder, Title = "test", Id, ModPath; }
     public class PersonalCloudLibrarySourceSettings
     {
         public const string AskEachTimeUninstallBehavior = "ask", RemoveCachedFileOnlyUninstallBehavior = "file", RemoveCachedInstallFolderUninstallBehavior = "folder";
         public string UninstallBehavior = "folder", LocalCacheFolder; public bool Refuse;
         public const string RcloneRemoteProviderType = "rclone";
         public string ProviderType = "rclone";
+        public bool Enabled = true, EnableModSync = true;
     }
-    public class PersonalCloudLibrarySource
+    public partial class PersonalCloudLibrarySource : LibraryPlugin
     {
+        public Guid Id = Guid.NewGuid();
+        public string ModManifestPath;
+        public int SyncCalls; public bool Relink;
+        public MenuSettings settings = new MenuSettings();
+        private static readonly ILogger logger = new ILogger();
+        private void RunModSync(Game game, bool stopped, bool manual, bool relink) { SyncCalls++; Relink = relink; }
+        private static PersonalCloudLibraryManifest ParseManifest(string json)
+        {
+            var result = System.Text.Json.JsonSerializer.Deserialize<PersonalCloudLibraryManifest>(json, new System.Text.Json.JsonSerializerOptions { IncludeFields = true, PropertyNameCaseInsensitive = true });
+            if (result?.Items == null) throw new InvalidOperationException("invalid manifest");
+            return result;
+        }
         public static string ResolveLaunchPath(PersonalCloudLibraryItem i, PersonalCloudLibrarySourceSettings s) => i.Launch;
         public static string ResolveDownloadDestinationFolder(PersonalCloudLibraryItem i, PersonalCloudLibrarySourceSettings s, string launch) => i.Folder;
         public static string GetItemSourcePath(PersonalCloudLibraryItem i) => i.Launch;
@@ -289,6 +377,8 @@ namespace PersonalCloudLibrarySource
         public static string ResolveSafeUninstallTarget(PersonalCloudLibrarySourceSettings s, string path, out string reason) { reason = s.Refuse || string.IsNullOrEmpty(path) ? "refused" : ""; return reason == "" ? path : ""; }
         public static bool IsPathInsideCacheFolder(string path, string root) => path.StartsWith(root);
     }
+    public class MenuSettings { public PersonalCloudLibrarySourceSettings Settings = new PersonalCloudLibrarySourceSettings(); }
+    public class PersonalCloudLibraryManifest { public System.Collections.Generic.List<PersonalCloudLibraryItem> Items; }
     public class CopyResult { public bool Succeeded; public string Message; public Exception Exception; }
     public class RcloneFileCopier { public Func<CopyResult> Copy; public CopyResult CopyRemoteDirectoryToLocalPath(PersonalCloudLibrarySourceSettings settings, string source, string target) => Copy(); }
     public class LocalFileCopier { public Func<CopyResult> Copy; public CopyResult CopyFileToLocalPath(string source, string target) => Copy(); }

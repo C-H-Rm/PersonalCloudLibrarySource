@@ -212,6 +212,18 @@ namespace PersonalCloudLibrarySource
                 throw new InvalidOperationException("Invalid remote mod folder.");
         }
 
+        public static string ResolveCloudModFolder(string root, string gameId)
+        {
+            root = (root ?? string.Empty).Replace('\\', '/').Trim('/');
+            if (root.Split('/').Any(part => part == ".." || part == ".") || root.IndexOfAny(new[] { ':', '\r', '\n', '"' }) >= 0)
+                throw new InvalidOperationException("Invalid rclone content root for mods.");
+            if (string.IsNullOrWhiteSpace(gameId) || gameId == "." || gameId == ".." ||
+                gameId.Any(c => char.IsControl(c) || "<>:\"/\\|?*".IndexOf(c) >= 0) ||
+                gameId.EndsWith(".") || gameId.EndsWith(" "))
+                throw new InvalidOperationException("Game ID must be a non-empty folder name, without separators or traversal.");
+            return (string.IsNullOrEmpty(root) ? "" : root + "/") + "mods/" + gameId;
+        }
+
         public static bool IsWithin(string candidate, string root)
         {
             var p = Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
