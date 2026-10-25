@@ -1,7 +1,6 @@
 using Playnite.SDK;
 using Playnite.SDK.Events;
 using Playnite.SDK.Models;
-using Playnite.SDK.Plugins;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -30,19 +29,6 @@ namespace PersonalCloudLibrarySource
                 else File.Move(temp, ModManifestPath);
             }
             catch (Exception ex) { logger.Warn(ex, "Could not cache the mod manifest."); }
-        }
-
-        public override IEnumerable<GameMenuItem> GetGameMenuItems(GetGameMenuItemsArgs args)
-        {
-            if (!settings.Settings.Enabled || !settings.Settings.EnableModSync) return new GameMenuItem[0];
-            var games = args.Games.Where(g => g.PluginId == Id).ToList();
-            if (games.Count != 1) return new GameMenuItem[0];
-            var game = games[0];
-            return new[]
-            {
-                new GameMenuItem { Description = "Sync mods", MenuSection = "Personal Cloud Library", Action = _ => RunModSync(game, false, true, false) },
-                new GameMenuItem { Description = "Relink mods after reinstall", MenuSection = "Personal Cloud Library", Action = _ => RunModSync(game, false, true, true) }
-            };
         }
 
         public override void OnGameStarting(OnGameStartingEventArgs args)
