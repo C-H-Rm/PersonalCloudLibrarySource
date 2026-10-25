@@ -81,4 +81,4 @@ Maintainers can exercise the complete packaging entrypoint in a fresh local clon
 python tools/test-build-pipeline.py --pwsh <pwsh> --dotnet <dotnet> --actionlint <actionlint>
 ```
 
-Commit the local candidate first: the test clones that exact commit, not a dirty working tree. On Linux add `--framework-root <reference-pack>/build/`. The test preserves its disposable fixture for inspecting failures and copies the successful package/receipts plus `ci-local-verification.json` into `dist`. It makes no GitHub/Nextcloud requests or pushes.
+Commit the local candidate first: the test clones that exact commit, not a dirty working tree. On Linux add `--framework-root <reference-pack>/build/`. The test preserves its disposable fixture for inspecting failures and copies the successful package/receipts plus `ci-local-verification.json` into `dist`. Raw logs (which may contain local paths) stay in the private fixture; only structured, path-checked evidence is exported. It makes no GitHub/Nextcloud requests or pushes.

@@ -122,6 +122,13 @@ def main():
     dest.mkdir(exist_ok=True)
     for key in ('package_path', 'receipt_path', 'checksum_path'):
         shutil.copy2(fixture / outputs[key], dest / Path(outputs[key]).name)
+    # Raw logs can contain formatted/truncated absolute paths. Keep them only
+    # in the private disposable fixture; export structured evidence instead.
+    raw_logs = {'build': build_log, 'guards': guard_log, 'compiler_failure': failure_log,
+                'validation_failure': validation_failure_log, 'debug_symbols': debug_log,
+                'discovery': fallback_log}
+    (root / 'raw-logs.json').write_text(json.dumps(raw_logs, indent=2))
+
     report = {
         'sourceCommit': commit,
         'hostedGitHubActionsRun': False,
@@ -131,14 +138,15 @@ def main():
         'cases': cases,
         'package': plugin.name,
         'packageSha256': final_receipt['sha256'],
-        'logs': {'build': build_log, 'guards': guard_log, 'compiler_failure': failure_log,
-                 'validation_failure': validation_failure_log, 'debug_symbols': debug_log,
-                 'discovery': fallback_log},
+        'rawLogsExported': False,
     }
-    # Keep exported receipts free of machine-specific local paths.
-    text = json.dumps(report, indent=2).replace(str(fixture), '<clean-fixture>').replace(str(source), '<repo>')
-    if args.framework_root:
-        text = text.replace(str(Path(args.framework_root).resolve()), '<framework-reference-pack>')
+    text = json.dumps(report, indent=2)
+    assert 'logs' not in report
+    assert not re.search(r'(?i)[a-z]:[\\/]|\\\\|(?<![a-z0-9])/[a-z0-9_.-]+', text), 'Absolute path found in exported evidence'
+    assert all(str(path).casefold() not in text.casefold() for path in (root, fixture, source))
+    passed('exported evidence excludes raw logs and absolute machine paths')
+    report['pipelineCasesPassed'] = len(cases)
+    text = json.dumps(report, indent=2)
     (dest / 'ci-local-verification.json').write_text(text)
     print('RESULT pipeline:', len(cases), 'passed; packaging guards:', guards.group(1), 'passed')
     print('Build receipt and installable package copied to dist. Disposable fixture retained:', root)
