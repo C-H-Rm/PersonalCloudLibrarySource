@@ -72,6 +72,8 @@ Local files, external drives, mapped drives, and NAS paths do not require rclone
 
 ## Building From Source for Developers
 
+A Windows GitHub Actions workflow is available in this local candidate at `.github/workflows/build-plugin.yml`. It rebuilds, verifies and uploads a real `.pext` without publishing a release. See [GitHub Actions and local build instructions](docs/github-actions-build.md); a hosted run still requires the workflow to be pushed first.
+
 1. Build the project using **Debug Any CPU**.
 2. Add the build output folder as a Playnite external extension:
 

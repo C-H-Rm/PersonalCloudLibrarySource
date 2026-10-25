@@ -1,0 +1,81 @@
+name: Build Playnite plugin
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - PersonalCloudLibrarySource/**
+      - tools/package-extension.ps1
+      - tools/verify-package.ps1
+      - tools/test-package-extension.ps1
+      - tools/test-build-pipeline.py
+      - global.json
+      - .github/workflows/build-plugin.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - PersonalCloudLibrarySource/**
+      - tools/package-extension.ps1
+      - tools/verify-package.ps1
+      - tools/test-package-extension.ps1
+      - tools/test-build-pipeline.py
+      - global.json
+      - .github/workflows/build-plugin.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-plugin-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and verify .pext
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build, package and inspect Playnite plugin
+        id: package
+        run: ./tools/package-extension.ps1 -MSBuildPath (Get-Command dotnet).Source
+
+      - name: Test package validation guards
+        env:
+          PACKAGE_PATH: ${{ steps.package.outputs.package_path }}
+        run: ./tools/test-package-extension.ps1 -PackagePath $env:PACKAGE_PATH
+
+      # upload-artifact v7 can expose a single .pext directly, without an outer ZIP.
+      - name: Upload installable Playnite file
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: ${{ steps.package.outputs.package_path }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload checksum and build receipt
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: PersonalCloudLibrarySource-build-info
+          path: |
+            ${{ steps.package.outputs.receipt_path }}
+            ${{ steps.package.outputs.checksum_path }}
+          if-no-files-found: error
+          retention-days: 14
