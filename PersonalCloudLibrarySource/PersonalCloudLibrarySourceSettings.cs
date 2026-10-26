@@ -33,6 +33,7 @@ namespace PersonalCloudLibrarySource
         private string rcloneManifestPath = string.Empty;
         private string rcloneContentRoot = string.Empty;
         private int rcloneTimeoutSeconds = 30;
+        private int rcloneTransferInactivityTimeoutSeconds = 300;
         private bool allowDownloads = true;
         private bool enableDiagnostics = true;
         private string uninstallBehavior = RemoveCachedInstallFolderUninstallBehavior;
@@ -134,6 +135,12 @@ namespace PersonalCloudLibrarySource
         {
             get => rcloneTimeoutSeconds;
             set => SetValue(ref rcloneTimeoutSeconds, value);
+        }
+
+        public int RcloneTransferInactivityTimeoutSeconds
+        {
+            get => rcloneTransferInactivityTimeoutSeconds;
+            set => SetValue(ref rcloneTransferInactivityTimeoutSeconds, value);
         }
 
         public bool AllowDownloads
@@ -266,6 +273,10 @@ namespace PersonalCloudLibrarySource
                 if (Settings.RcloneTimeoutSeconds < 5 || Settings.RcloneTimeoutSeconds > 300)
                 {
                     errors.Add("The rclone timeout must be between 5 and 300 seconds.");
+                }
+                if (Settings.RcloneTransferInactivityTimeoutSeconds < 5 || Settings.RcloneTransferInactivityTimeoutSeconds > 86400)
+                {
+                    errors.Add("The transfer inactivity timeout must be between 5 and 86400 seconds.");
                 }
             }
             else

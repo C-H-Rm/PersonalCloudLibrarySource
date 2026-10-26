@@ -650,18 +650,7 @@ namespace PersonalCloudLibrarySource
 
         public static bool IsPathInsideCacheFolder(string candidatePath, string localCacheFolder)
         {
-            if (string.IsNullOrWhiteSpace(localCacheFolder) ||
-                string.IsNullOrWhiteSpace(candidatePath))
-            {
-                return false;
-            }
-
-            var cacheRoot = NormalizeFullPath(localCacheFolder)
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            var candidate = NormalizeFullPath(candidatePath)
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-
-            return candidate.StartsWith(cacheRoot, StringComparison.OrdinalIgnoreCase);
+            return new SafeCacheDeletionPolicy().IsStrictlyInsideCache(localCacheFolder, candidatePath);
         }
 
         public static string ResolveSafeUninstallTarget(
@@ -669,64 +658,12 @@ namespace PersonalCloudLibrarySource
             string targetPath,
             out string refusalReason)
         {
-            refusalReason = string.Empty;
-
-            if (string.IsNullOrWhiteSpace(targetPath))
-            {
-                refusalReason = "uninstall target path is empty";
-                return string.Empty;
-            }
-
-            string normalizedTarget;
-            try
-            {
-                normalizedTarget = NormalizeFullPath(targetPath);
-            }
-            catch (Exception ex)
-            {
-                refusalReason = "uninstall target path could not be normalized: " + ex.Message;
-                return string.Empty;
-            }
-
-            if (IsDriveRoot(normalizedTarget))
-            {
-                refusalReason = "uninstall target is a drive root";
-                return string.Empty;
-            }
-
-            var normalizedCache = string.Empty;
-            if (pluginSettings != null && !string.IsNullOrWhiteSpace(pluginSettings.LocalCacheFolder))
-            {
-                try
-                {
-                    normalizedCache = NormalizeFullPath(pluginSettings.LocalCacheFolder)
-                        .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                }
-                catch (Exception ex)
-                {
-                    refusalReason = "LocalCacheFolder could not be normalized: " + ex.Message;
-                    return string.Empty;
-                }
-            }
-
-            if (!string.IsNullOrWhiteSpace(normalizedCache) &&
-                string.Equals(
-                    normalizedTarget.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                    normalizedCache,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                refusalReason = "uninstall target is LocalCacheFolder itself";
-                return string.Empty;
-            }
-
-            var insideCache = IsPathInsideCacheFolder(normalizedTarget, pluginSettings?.LocalCacheFolder);
-            if (pluginSettings == null || (!pluginSettings.AllowUninstallOutsideCacheFolder && !insideCache))
-            {
-                refusalReason = "uninstall target is outside LocalCacheFolder";
-                return string.Empty;
-            }
-
-            return normalizedTarget;
+            var authorization = new SafeCacheDeletionPolicy().Authorize(
+                pluginSettings?.LocalCacheFolder,
+                targetPath,
+                pluginSettings?.AllowUninstallOutsideCacheFolder == true);
+            refusalReason = authorization.Reason;
+            return authorization.Allowed ? authorization.TargetPath : string.Empty;
         }
 
         public static string NormalizeFullPath(string path)
@@ -735,20 +672,6 @@ namespace PersonalCloudLibrarySource
                 .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         }
 
-        private static bool IsDriveRoot(string path)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return false;
-            }
-
-            var root = Path.GetPathRoot(path);
-            return !string.IsNullOrWhiteSpace(root) &&
-                string.Equals(
-                    path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                    root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                    StringComparison.OrdinalIgnoreCase);
-        }
 
         public static string GetItemSourcePath(PersonalCloudLibraryItem item)
         {

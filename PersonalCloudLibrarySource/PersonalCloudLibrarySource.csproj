@@ -39,6 +39,7 @@
     <Reference Include="PresentationFramework" />
     <Reference Include="System" />
     <Reference Include="System.Core" />
+    <Reference Include="System.Runtime.Serialization" />
     <Reference Include="System.Xaml" />
     <Reference Include="System.Xml.Linq" />
     <Reference Include="System.Data.DataSetExtensions" />
@@ -63,8 +64,10 @@
     <Compile Include="PersonalCloudLibraryUninstallController.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="RcloneFileCopier.cs" />
+    <Compile Include="RcloneActivityTimeout.cs" />
     <Compile Include="RcloneInstallController.cs" />
     <Compile Include="RcloneManifestReader.cs" />
+    <Compile Include="SafeCacheDeletionPolicy.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="extension.yaml">

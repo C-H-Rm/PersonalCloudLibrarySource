@@ -5,6 +5,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../PersonalCloudLibrarySource/PersonalCloudLibraryUninstallController.cs" Link="PersonalCloudLibraryUninstallController.cs" />
+    <Compile Include="../../PersonalCloudLibrarySource/SafeCacheDeletionPolicy.cs" Link="SafeCacheDeletionPolicy.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/RcloneInstallController.cs" Link="RcloneInstallController.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/ModSyncGameMenu.cs" Link="ModSyncGameMenu.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/ModSyncService.cs" Link="ModSyncService.cs" />

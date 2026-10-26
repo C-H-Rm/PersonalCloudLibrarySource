@@ -18,6 +18,7 @@ namespace PersonalCloudLibrarySource
         private readonly PersonalCloudLibraryItem item;
         private readonly PersonalCloudLibrarySourceSettings settings;
         private readonly Action beforeUninstall;
+        private readonly SafeCacheDeletionExecutor deletionExecutor = new SafeCacheDeletionExecutor();
 
         public PersonalCloudLibraryUninstallController(
             IPlayniteAPI playniteApi,
@@ -60,13 +61,17 @@ namespace PersonalCloudLibrarySource
                     }
 
                     beforeUninstall?.Invoke();
-                    if (File.Exists(targetPath)) File.Delete(targetPath);
-                    else if (Directory.Exists(targetPath)) Directory.Delete(targetPath, recursive: true);
-                    else
+                    // The executor revalidates after the pause hook and checks descendant links.
+                    var deletion = deletionExecutor.Delete(
+                        settings.LocalCacheFolder,
+                        targetPath,
+                        settings.AllowUninstallOutsideCacheFolder);
+                    if (!deletion.Allowed)
                     {
-                        logger.Info($"Personal Cloud Library Source uninstall skipped for {Game.GameId}: cached target does not exist.");
+                        logger.Info($"Personal Cloud Library Source uninstall skipped for {Game.GameId}: {deletion.Reason}.");
                         return false;
                     }
+
                     return true;
                 });
                 if (!deleted) return;
