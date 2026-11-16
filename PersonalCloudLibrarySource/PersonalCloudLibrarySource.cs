@@ -34,6 +34,7 @@ namespace PersonalCloudLibrarySource
             {
                 HasSettings = true
             };
+            RegisterInlineInstallProgress();
         }
 
         public override IEnumerable<GameMetadata> GetGames(LibraryGetGamesArgs args)

@@ -139,6 +139,27 @@ class Program
             Check(completed == context.Owner && f.Game.IsInstalled && f.Game.GameActions.Count == 1, "wrong install completion");
             Check(f.Game.GameActions[0].Path == f.Item.Launch, "wrong launch action");
         });
+        Test("install publishes per-game inline progress and removes it after success", () =>
+        {
+            using var f = new Fixture();
+            f.Game.IsInstalled = false; File.Delete(f.Item.Launch);
+            using var entered = new ManualResetEventSlim();
+            using var release = new ManualResetEventSlim();
+            var c = f.Installer(() => {
+                entered.Set(); release.Wait(TimeSpan.FromSeconds(2));
+                File.WriteAllText(f.Item.Launch, "fixture download");
+                return new CopyResult { Succeeded = true };
+            });
+            try {
+                c.Install(new InstallActionArgs());
+                Check(entered.Wait(2000), "download fixture did not start");
+                var status = InstallProgressState.Shared.Get(f.Game.Id);
+                Check(status != null && status.Active && status.Percentage == 50 && status.TotalBytes == 100 && status.BytesPerSecond == 25,
+                    "inline progress did not receive the exact fixture telemetry");
+            } finally { release.Set(); }
+            context.Until(() => !f.Game.IsInstalling);
+            Check(f.Game.IsInstalled && InstallProgressState.Shared.Get(f.Game.Id) == null, "successful progress did not disappear");
+        });
         foreach (var failure in new[] { "copy failure", "missing executable", "exception" })
         Test("install " + failure + " clears progress without success", () =>
         {
@@ -411,7 +432,25 @@ namespace PersonalCloudLibrarySource
     }
     public class MenuSettings { public PersonalCloudLibrarySourceSettings Settings = new PersonalCloudLibrarySourceSettings(); }
     public class PersonalCloudLibraryManifest { public System.Collections.Generic.List<PersonalCloudLibraryItem> Items; }
-    public class CopyResult { public bool Succeeded; public string Message; public Exception Exception; }
-    public class RcloneFileCopier { public Func<CopyResult> Copy; public CopyResult CopyRemoteDirectoryToLocalPath(PersonalCloudLibrarySourceSettings settings, string source, string target) => Copy(); }
+    public class CopyResult { public bool Succeeded, Cancelled; public string Message; public Exception Exception; }
+    // Explicit transfer double for exercising the real install controller/host-context boundary.
+    public class RcloneTransferProgress
+    {
+        public string Phase; public long CompletedBytes; public long? TotalBytes;
+        public double BytesPerSecond; public double? Percentage;
+    }
+    public class RcloneFileCopier
+    {
+        public Func<CopyResult> Copy;
+        public CopyResult CopyRemoteDirectoryToLocalPath(PersonalCloudLibrarySourceSettings settings, string source, string target) => Copy();
+        public CopyResult CopyRemoteDirectoryToLocalPath(PersonalCloudLibrarySourceSettings settings, string source, string target,
+            CancellationToken cancellationToken, Action<RcloneTransferProgress> progress)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Invoke(new RcloneTransferProgress { Phase = "Inventory" });
+            progress?.Invoke(new RcloneTransferProgress { Phase = "Downloading", CompletedBytes = 50, TotalBytes = 100, BytesPerSecond = 25, Percentage = 50 });
+            return Copy();
+        }
+    }
     public class LocalFileCopier { public Func<CopyResult> Copy; public CopyResult CopyFileToLocalPath(string source, string target) => Copy(); }
 }

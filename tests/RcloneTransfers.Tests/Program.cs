@@ -4,6 +4,7 @@ using System.IO;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using PersonalCloudLibrarySource;
 
 // Real copier source, disposable filesystem endpoints and explicitly labelled process fixtures.
@@ -27,6 +28,63 @@ internal static class Program
             f.UseProcessFixture();
             var result = f.Copier.CopyRemoteFileToLocalPath(f.Settings, "progress", f.Destination);
             Check(result.Succeeded && File.Exists(f.Destination), "active copy was killed: " + result.Message);
+        });
+        Test("progress policy freezes whole-transfer denominator after inventory", f =>
+        {
+            var tracker = new RcloneTransferProgressTracker();
+            Check(tracker.Progress.Phase == "Inventory" && tracker.Progress.TotalBytes == null, "inventory was reported as sized");
+            tracker.ObserveStats("{\"stats\":{\"bytes\":0,\"speed\":0,\"totalBytes\":100,\"transfers\":0,\"totalTransfers\":0}}", 0);
+            Check(tracker.Progress.TotalBytes == null, "inventory total leaked before copy started");
+            tracker.ObserveStats("{\"stats\":{\"bytes\":10,\"speed\":4,\"totalBytes\":100,\"transfers\":1,\"totalTransfers\":2}}", 1);
+            Check(tracker.Progress.Phase == "Downloading" && tracker.Progress.TotalBytes == 100 && tracker.Progress.Percentage == 10, "transfer start did not freeze denominator");
+            tracker.ObserveStats("{\"stats\":{\"bytes\":20,\"speed\":8,\"totalBytes\":200,\"transfers\":1,\"totalTransfers\":3}}", 2);
+            Check(tracker.Progress.TotalBytes == 100 && tracker.Progress.CompletedBytes == 20 && tracker.Progress.Percentage == 20, "denominator changed as more files were discovered");
+        });
+        Test("progress parser ignores malformed stats and bounds percentages", f =>
+        {
+            var tracker = new RcloneTransferProgressTracker();
+            tracker.ObserveStats("not json", 1);
+            tracker.ObserveStats("{\"stats\":{\"bytes\":5,\"speed\":12,\"totalBytes\":4,\"transfers\":1}}", 2);
+            Check(tracker.Progress.TotalBytes == 4 && tracker.Progress.CompletedBytes == 4 && tracker.Progress.Percentage == null && tracker.Progress.Phase == "Finishing", "unconfirmed byte completion was falsely displayed as successful 100%");
+        });
+        Test("retry counter resets retain total but do not fabricate overall progress", f =>
+        {
+            var tracker = new RcloneTransferProgressTracker();
+            tracker.ObserveStats("{\"stats\":{\"bytes\":90,\"speed\":10,\"totalBytes\":100,\"transfers\":1}}", 1);
+            tracker.ObserveStats("{\"stats\":{\"bytes\":5,\"speed\":5,\"totalBytes\":100,\"transfers\":0}}", 2);
+            Check(tracker.Progress.TotalBytes == 100 && tracker.Progress.Phase == "Retrying" && tracker.Progress.Percentage == null,
+                "retry reset was hidden behind a misleading high-water percentage");
+        });
+        Test("progress terminal states only complete successfully", f =>
+        {
+            var tracker = new RcloneTransferProgressTracker();
+            tracker.ObserveStats("{\"stats\":{\"bytes\":4,\"speed\":2,\"totalBytes\":10,\"transfers\":1}}", 1);
+            tracker.Finish("Failed");
+            Check(tracker.Progress.Phase == "Failed" && tracker.Progress.Percentage == null, "failure appeared complete");
+            tracker = new RcloneTransferProgressTracker();
+            tracker.Finish("Complete");
+            Check(tracker.Progress.Phase == "Complete" && tracker.Progress.Percentage == 100, "success was not complete");
+        });
+        Test("cancellation stops the child and reports cancelled", f =>
+        {
+            f.UseProcessFixture();
+            using var source = new CancellationTokenSource();
+            var progress = new ManualResetEventSlim(false);
+            var result = Task.Run(() => f.Copier.CopyRemoteFileToLocalPath(f.Settings, "idle", f.Destination,
+                source.Token, _ => progress.Set()));
+            Check(progress.Wait(TimeSpan.FromSeconds(5)), "no inventory/progress callback before cancellation");
+            source.Cancel();
+            Check(result.Wait(TimeSpan.FromSeconds(8)), "cancelled process did not terminate");
+            Check(result.Result.Cancelled && !result.Result.Succeeded, "cancellation was reported as generic failure/success");
+            CheckStopped(f.Destination);
+        });
+        Test("progress callback exceptions cannot leak child", f =>
+        {
+            f.UseProcessFixture();
+            var result = f.Copier.CopyRemoteFileToLocalPath(f.Settings, "progress", f.Destination,
+                CancellationToken.None, p => { if (p.Phase == "Downloading") throw new InvalidOperationException("consumer failed"); });
+            Check(!result.Succeeded && !result.Cancelled && result.Exception != null, "callback failure was not surfaced as failure");
+            CheckStopped(f.Destination);
         });
         Test("silent child times out and is stopped", f =>
         {
@@ -79,10 +137,42 @@ internal static class Program
             var result = f.Copier.CopyRemoteDirectoryToLocalPath(f.Settings, source, f.Destination);
             Check(result.Succeeded && File.ReadAllText(Path.Combine(f.Destination, "nested", "mod.bin")) == "nested content", result.Message);
         });
+        Test("real directory total includes every required file but not skipped cache", f =>
+        {
+            var source = Path.Combine(f.Root, "whole-source");
+            var target = Path.Combine(f.Root, "whole-target");
+            Directory.CreateDirectory(source); Directory.CreateDirectory(target);
+            var first = Path.Combine(source, "first.bin");
+            var second = Path.Combine(source, "second.bin");
+            File.WriteAllBytes(first, new byte[128 * 1024]);
+            File.WriteAllBytes(second, new byte[256 * 1024]);
+            var cached = Path.Combine(source, "already-cached.bin");
+            File.WriteAllBytes(cached, new byte[64 * 1024]);
+            File.Copy(cached, Path.Combine(target, "already-cached.bin"));
+            File.SetLastWriteTimeUtc(Path.Combine(target, "already-cached.bin"), File.GetLastWriteTimeUtc(cached));
+            var expected = new FileInfo(first).Length + new FileInfo(second).Length;
+            var previous = Environment.GetEnvironmentVariable("RCLONE_BWLIMIT");
+            Environment.SetEnvironmentVariable("RCLONE_BWLIMIT", "128k");
+            try {
+                var samples = new System.Collections.Generic.List<RcloneTransferProgress>();
+                var result = f.Copier.CopyRemoteDirectoryToLocalPath(f.Settings, source, target,
+                    CancellationToken.None, p => samples.Add(p));
+                Check(result.Succeeded, result.Message);
+                Check(samples.Exists(p => p.Phase == "Downloading"), "no actual directory transfer progress");
+                Check(samples.FindAll(p => p.TotalBytes.HasValue).TrueForAll(p => p.TotalBytes == expected),
+                    "whole-directory total was partial, changing, or included skipped cached files");
+                Check(File.ReadAllBytes(Path.Combine(target, "first.bin")).Length == new FileInfo(first).Length &&
+                    File.ReadAllBytes(Path.Combine(target, "second.bin")).Length == new FileInfo(second).Length,
+                    "required files were not copied");
+            } finally { Environment.SetEnvironmentVariable("RCLONE_BWLIMIT", previous); }
+        });
         Test("real rclone reports a missing source", f =>
         {
-            var result = f.Copier.CopyRemoteFileToLocalPath(f.Settings, Path.Combine(f.Root, "does-not-exist"), f.Destination);
+            var phases = new System.Collections.Generic.List<RcloneTransferProgress>();
+            var result = f.Copier.CopyRemoteFileToLocalPath(f.Settings, Path.Combine(f.Root, "does-not-exist"), f.Destination,
+                CancellationToken.None, p => phases.Add(p));
             Check(!result.Succeeded, "missing source accepted");
+            Check(phases[phases.Count - 1].Phase == "Failed" && phases.TrueForAll(p => p.Phase != "Complete"), "failed real transfer appeared complete");
         });
         Test("real throttled transfer is not capped by total duration", f =>
         {
@@ -91,10 +181,34 @@ internal static class Program
             Environment.SetEnvironmentVariable("RCLONE_BWLIMIT", "128k");
             try
             {
+                var samples = new System.Collections.Generic.List<RcloneTransferProgress>();
                 var timer = Stopwatch.StartNew();
-                var result = f.Copier.CopyRemoteFileToLocalPath(f.Settings, source, f.Destination);
+                var result = f.Copier.CopyRemoteFileToLocalPath(f.Settings, source, f.Destination, CancellationToken.None, p => samples.Add(p));
                 Check(result.Succeeded && timer.Elapsed.TotalSeconds > 5 && new FileInfo(f.Destination).Length == 1024 * 1024,
                     "slow transfer failed or did not exercise old limit: " + result.Message);
+                var downloading = samples.FindAll(p => p.Phase == "Downloading");
+                Check(downloading.Count > 0 && downloading[0].TotalBytes == 1024 * 1024,
+                    "real rclone did not report a frozen transfer total");
+                Check(samples[samples.Count - 1].Phase == "Complete" && samples[samples.Count - 1].Percentage == 100,
+                    "successful transfer did not finish at 100%");
+            }
+            finally { Environment.SetEnvironmentVariable("RCLONE_BWLIMIT", previous); }
+        });
+        Test("real throttled transfer cancellation terminates rclone", f =>
+        {
+            var sourcePath = Path.Combine(f.Root, "cancel-slow.bin");
+            File.WriteAllBytes(sourcePath, new byte[1024 * 1024]);
+            var previous = Environment.GetEnvironmentVariable("RCLONE_BWLIMIT");
+            Environment.SetEnvironmentVariable("RCLONE_BWLIMIT", "32k");
+            try
+            {
+                using var cancellation = new CancellationTokenSource();
+                using var started = new ManualResetEventSlim(false);
+                var result = Task.Run(() => f.Copier.CopyRemoteFileToLocalPath(f.Settings, sourcePath, f.Destination,
+                    cancellation.Token, p => { if (p.Phase == "Downloading") { started.Set(); cancellation.Cancel(); } }));
+                Check(started.Wait(TimeSpan.FromSeconds(10)), "native transfer never reached downloading");
+                Check(result.Wait(TimeSpan.FromSeconds(8)), "native rclone process did not stop after cancellation");
+                Check(result.Result.Cancelled && !result.Result.Succeeded, "native cancellation was not distinguished from failure");
             }
             finally { Environment.SetEnvironmentVariable("RCLONE_BWLIMIT", previous); }
         });

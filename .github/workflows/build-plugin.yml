@@ -11,6 +11,9 @@ on:
       - tests/RcloneTransfers.Tests/**
       - tests/ModSync.Tests/**
       - tests/ModSyncUx.Tests/**
+      - tests/InstallProgress.Tests/**
+      - tools/add-install-progress-to-theme.ps1
+      - tools/test-install-progress-theme.py
       - tools/package-extension.ps1
       - tools/verify-package.ps1
       - tools/test-package-extension.ps1
@@ -28,6 +31,9 @@ on:
       - tests/RcloneTransfers.Tests/**
       - tests/ModSync.Tests/**
       - tests/ModSyncUx.Tests/**
+      - tests/InstallProgress.Tests/**
+      - tools/add-install-progress-to-theme.ps1
+      - tools/test-install-progress-theme.py
       - tools/package-extension.ps1
       - tools/verify-package.ps1
       - tools/test-package-extension.ps1
@@ -75,6 +81,13 @@ jobs:
 
       - name: Test nightly publication guards without network access
         run: python -B tools/test-nightly-release.py
+
+      - name: Test inline installation state and safe theme integration
+        run: |
+          dotnet run --project tests/InstallProgress.Tests/InstallProgress.Tests.csproj --configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Inline progress state tests failed.' }
+          python -B tools/test-install-progress-theme.py --pwsh (Get-Command pwsh).Source
+          if ($LASTEXITCODE -ne 0) { throw 'Theme integration tests failed.' }
 
       - name: Test cache deletion safety
         run: dotnet run --project tests/CacheSafety.Tests/CacheSafety.Tests.csproj --configuration Release
