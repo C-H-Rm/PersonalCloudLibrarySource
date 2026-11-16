@@ -34,6 +34,12 @@ namespace PersonalCloudLibrarySource
         public override void OnGameStarting(OnGameStartingEventArgs args)
         {
             if (args.CancelStartup) return;
+            if (args.Game?.PluginId == Id && InstallProgressState.Shared.Get(args.Game.Id)?.Active == true)
+            {
+                args.CancelStartup = true;
+                NotifyModSync(args.Game, new ModSyncResult { Message = "Installation or mod restoration is still active. Wait for it to finish or cancel mod restoration first." });
+                return;
+            }
             var result = RunModSync(args.Game, false, false, false);
             // Cancel means cancel this launch, not start silently with unchecked mods.
             if (result != null && result.Cancelled) { args.CancelStartup = true; return; }

@@ -11,5 +11,6 @@
     <Compile Include="../../PersonalCloudLibrarySource/ModSyncGameMenu.cs" Link="ModSyncGameMenu.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/ModSyncService.cs" Link="ModSyncService.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/ModSyncProcess.cs" Link="ModSyncProcess.cs" />
+    <Compile Include="../../PersonalCloudLibrarySource/ModSyncUserInteraction.cs" Link="ModSyncUserInteraction.cs" />
   </ItemGroup>
 </Project>

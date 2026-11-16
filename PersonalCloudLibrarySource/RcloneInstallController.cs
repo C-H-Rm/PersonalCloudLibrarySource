@@ -4,6 +4,7 @@ using Playnite.SDK.Plugins;
 using System;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace PersonalCloudLibrarySource
@@ -15,13 +16,16 @@ namespace PersonalCloudLibrarySource
         private readonly PersonalCloudLibrarySourceSettings settings;
         private readonly RcloneFileCopier rcloneFileCopier;
         private readonly LocalFileCopier localFileCopier;
+        private readonly Func<CancellationToken, Action<ModSyncProgress>, bool, Task<ModSyncResult>> restoreMods;
 
         public RcloneInstallController(Game game, PersonalCloudLibraryItem item,
             PersonalCloudLibrarySourceSettings settings, RcloneFileCopier rcloneFileCopier,
-            LocalFileCopier localFileCopier) : base(game)
+            LocalFileCopier localFileCopier,
+            Func<CancellationToken, Action<ModSyncProgress>, bool, Task<ModSyncResult>> restoreMods = null) : base(game)
         {
             this.item = item; this.settings = settings;
             this.rcloneFileCopier = rcloneFileCopier; this.localFileCopier = localFileCopier;
+            this.restoreMods = restoreMods;
             Name = "Download to local cache";
         }
 
@@ -74,7 +78,8 @@ namespace PersonalCloudLibrarySource
                 Game.GameActions.Add(new GameAction { Name = "Play", Type = GameActionType.File,
                     Path = launchPath, WorkingDir = installDirectory, IsPlayAction = true });
                 installed = true;
-                operation.Finish("Complete");
+                if (ShouldRestoreMods()) FinishMods(operation, await RestoreMods(operation, false));
+                else operation.Finish("Complete");
                 InvokeOnInstalled(new GameInstalledEventArgs(new GameInstallationData { InstallDirectory = installDirectory }));
                 logger.Info($"Personal Cloud Library Source downloaded item {item.Id} to local cache.");
             }
@@ -98,6 +103,56 @@ namespace PersonalCloudLibrarySource
                 catch (Exception ex) { logger.Error(ex, "Could not finish cached install state."); }
                 operation.Dispose();
             }
+        }
+
+        private bool ShouldRestoreMods() => restoreMods != null && settings.Enabled && settings.EnableModSync &&
+            !string.IsNullOrWhiteSpace(item.ModPath) && string.Equals(PersonalCloudLibrarySource.GetProviderType(settings),
+                PersonalCloudLibrarySourceSettings.RcloneRemoteProviderType, StringComparison.OrdinalIgnoreCase);
+
+        private async Task<ModSyncResult> RestoreMods(InstallProgressSession operation, bool recover)
+        {
+            operation.Report("RestoringMods", message: recover ? "Recovering mod synchronization" : "Restoring and linking cloud mods");
+            try
+            {
+                return await restoreMods(operation.CancellationToken, progress => operation.Report("RestoringMods",
+                    progress.Bytes, progress.TotalBytes > 0 ? (long?)progress.TotalBytes : null, progress.BytesPerSecond,
+                    message: ModSyncUserInteraction.ProgressText(progress.Phase, 0, 0,
+                        progress.Checks, progress.TotalChecks, 0)), recover);
+            }
+            catch (OperationCanceledException) { return new ModSyncResult { Cancelled = true, Message = "Mod restoration cancelled; the game remains installed." }; }
+            catch (Exception ex) { return new ModSyncResult { Message = ex.Message }; }
+        }
+
+        private void FinishMods(InstallProgressSession operation, ModSyncResult result)
+        {
+            if (result == null || result.Success && !result.HasConflicts) { operation.Finish("Complete"); return; }
+            var recovery = result.RequiresRelink;
+            var diagnostic = string.IsNullOrWhiteSpace(result.DiagnosticPath) ? "" : "\nDiagnostics: " + result.DiagnosticPath;
+            var consent = recovery ? "\nRecover mods archives the old sync setup and merges these folders; it does not silently overwrite differing files." : "";
+            operation.Finish(result.Cancelled ? "Cancelled" : "Failed",
+                "Game installed; mods need attention. " + result.Message + consent + diagnostic,
+                () => RetryMods(recovery), recovery ? "Recover mods" : "Retry mods");
+        }
+
+        private async void RetryMods(bool recover)
+        {
+            if (!InstallProgressState.Shared.TryBegin(Game.Id, out var operation)) return;
+            try
+            {
+                if (!Game.IsInstalled || !ShouldRestoreMods())
+                {
+                    operation.Finish("Failed", "Install the game and enable its configured mod synchronization before retrying mods.");
+                    return;
+                }
+                Game.IsInstalling = true;
+                FinishMods(operation, await RestoreMods(operation, recover));
+            }
+            catch (Exception ex)
+            {
+                operation.Finish("Failed", "Could not retry mods: " + ex.Message);
+                logger.Error(ex, "Optional mod-only retry failed.");
+            }
+            finally { Game.IsInstalling = false; operation.Dispose(); }
         }
     }
 }

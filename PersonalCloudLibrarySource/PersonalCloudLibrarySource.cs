@@ -147,7 +147,8 @@ namespace PersonalCloudLibrarySource
                         item,
                         pluginSettings,
                         rcloneFileCopier,
-                        localFileCopier));
+                        localFileCopier,
+                        CreateInstallModRestore(args.Game, item, manifest, pluginSettings)));
                     logger.Info($"Personal Cloud Library Source install action returned for {item.Id}.");
                     return installActions;
                 }

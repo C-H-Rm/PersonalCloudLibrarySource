@@ -17,6 +17,7 @@ namespace PersonalCloudLibrarySource
         public double? Percentage { get; internal set; }
         public bool Active { get; internal set; }
         public bool CanRetry { get; internal set; }
+        public string RetryLabel { get; internal set; }
     }
 
     public sealed class InstallProgressChangedEventArgs : EventArgs
@@ -67,7 +68,7 @@ namespace PersonalCloudLibrarySource
             Notify(session.GameId);
         }
 
-        internal void Finish(InstallProgressSession session, string phase, string message, Action retry)
+        internal void Finish(InstallProgressSession session, string phase, string message, Action retry, string retryLabel)
         {
             lock (gate)
             {
@@ -78,7 +79,8 @@ namespace PersonalCloudLibrarySource
                     entry.Session = null;
                     entry.Retry = retry;
                     entry.Snapshot = new InstallProgressSnapshot {
-                        GameId = session.GameId, OperationId = session.OperationId, Phase = phase, Message = message, CanRetry = retry != null };
+                        GameId = session.GameId, OperationId = session.OperationId, Phase = phase, Message = message,
+                        CanRetry = retry != null, RetryLabel = retryLabel };
                 }
             }
             Notify(session.GameId);
@@ -137,8 +139,8 @@ namespace PersonalCloudLibrarySource
         public void Report(string phase, long bytes = 0, long? total = null, double speed = 0,
             double? percentage = null, string message = null)
         { if (Volatile.Read(ref finished) == 0) owner.Report(this, phase, bytes, total, speed, percentage, message); }
-        public void Finish(string phase, string message = null, Action retry = null)
-        { if (Interlocked.Exchange(ref finished, 1) == 0) owner.Finish(this, phase, message, retry); }
+        public void Finish(string phase, string message = null, Action retry = null, string retryLabel = "Retry mods")
+        { if (Interlocked.Exchange(ref finished, 1) == 0) owner.Finish(this, phase, message, retry, retryLabel); }
         internal bool Cancel()
         {
             if (Volatile.Read(ref finished) != 0) return false;

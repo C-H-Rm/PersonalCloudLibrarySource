@@ -112,6 +112,52 @@ internal static class Program
             var result = f.Service.Synchronize(f.Request, _ => { asked = true; return false; });
             Check(asked && !result.Success && File.Exists(f.Remote("a")), "stale count bypassed confirmation");
         });
+        Test("initial pairing refuses Windows case-only overlaps without creating a baseline", f => {
+            f.Local("mod.bin", "local-copy"); f.Cloud("MOD.BIN", "cloud-copy");
+            var result = f.Service.RestoreAfterInstall(f.Request);
+            Check(!result.Success && File.ReadAllText(f.Path("mod.bin")) == "local-copy" && File.ReadAllText(f.Remote("MOD.BIN")) == "cloud-copy", "case-ambiguous initial files were merged");
+            Check(!File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt")), "ambiguous pairing reached initialization");
+        });
+        Test("Unix fixture refuses cloud names colliding on a Windows destination", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            f.Cloud("mod.bin", "first"); f.Cloud("MOD.BIN", "second");
+            var result = f.Service.RestoreAfterInstall(f.Request);
+            Check(!result.Success && !File.Exists(f.Path("mod.bin")) && !File.Exists(f.Path("MOD.BIN")), "case-colliding cloud files were copied");
+            Check(!File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt")), "cloud collision reached initialization");
+        });
+        Test("Unix content fallback also refuses Windows case-only overlaps", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            f.Local("mod.bin", "local-copy"); f.Cloud("MOD.BIN", "cloud-copy");
+            var real = Environment.GetEnvironmentVariable("PCLS_RCLONE") ?? "rclone";
+            var wrapper = System.IO.Path.Combine(f.Root, "listing-unavailable.sh");
+            File.WriteAllText(wrapper, "#!/bin/sh\nif [ \"$1\" = lsjson ]; then exit 1; fi\nexec \"" + real + "\" \"$@\"\n");
+            File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            f.Request.RcloneExecutable = wrapper;
+            var result = f.Service.RestoreAfterInstall(f.Request);
+            Check(!result.Success && !File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt")), "content fallback bypassed Windows name-collision guard");
+        });
+        Test("native per-object hashes verify same-size same-time initial content", f => {
+            f.Local("mod", "aaaa"); f.Cloud("mod", "bbbb");
+            var stamp = File.GetLastWriteTimeUtc(f.Path("mod")); File.SetLastWriteTimeUtc(f.Remote("mod"), stamp);
+            var result = f.Service.Synchronize(f.Request, _ => true);
+            var log = File.ReadAllText(System.IO.Path.Combine(f.Request.StateDirectory, "diagnostics.log"));
+            Check(!result.Success && File.ReadAllText(f.Path("mod")) == "aaaa" && File.ReadAllText(f.Remote("mod")) == "bbbb", "equal metadata content conflict was overwritten");
+            Check(log.Contains("mode=native-per-object"), "usable native hash path was not recorded");
+        });
+        Test("mixed native hashes fall back to actual content checks", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            f.Local("mod", "aaaa"); f.Cloud("mod", "bbbb");
+            f.Local("other", "identical"); f.Cloud("other", "identical");
+            var real = Environment.GetEnvironmentVariable("PCLS_RCLONE") ?? "rclone";
+            var wrapper = System.IO.Path.Combine(f.Root, "no-hash-rclone.sh");
+            File.WriteAllText(wrapper, "#!/bin/bash\nif [ \"$1\" = lsjson ]; then shift; \"" + real + "\" lsjson \"$@\" | sed -E '0,/\"Hashes\":\\{[^}]*\\}/s//\"Hashes\":{}/'; exit ${PIPESTATUS[0]}; fi\nexec \"" + real + "\" \"$@\"\n");
+            File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            f.Request.RcloneExecutable = wrapper;
+            var result = f.Service.Synchronize(f.Request, _ => true);
+            var log = File.ReadAllText(System.IO.Path.Combine(f.Request.StateDirectory, "diagnostics.log"));
+            Check(!result.Success && File.ReadAllText(f.Path("mod")) == "aaaa" && File.ReadAllText(f.Remote("mod")) == "bbbb", "fallback content conflict was overwritten");
+            Check(log.Contains("mode=download-fallback phase=content-check"), "missing-hash fallback was not recorded");
+        });
         Test("same-size same-time local edits are detected by checksum", f => {
             f.Local("mod", "aaaa"); f.Sync(); var stamp = File.GetLastWriteTimeUtc(f.Path("mod"));
             File.WriteAllText(f.Path("mod"), "bbbb"); File.SetLastWriteTimeUtc(f.Path("mod"), stamp); f.Sync();
@@ -142,6 +188,71 @@ internal static class Program
         Test("pause after uninstall prevents sync even if mod folder still exists", f => {
             f.Local("a", "a"); f.Sync(); f.Service.Pause(f.Request.StateDirectory); File.Delete(f.Path("a"));
             Check(!f.Service.Synchronize(f.Request, _ => true).Success && File.Exists(f.Remote("a")), "paused sync erased cloud");
+        });
+        Test("install restore creates a new missing mod folder without deleting cloud mods", f => {
+            f.Cloud("cloud.txt", "cloud"); Directory.Delete(f.LocalRoot, true);
+            var result = f.Service.RestoreAfterInstall(f.Request);
+            Check(result.Success && File.ReadAllText(f.Path("cloud.txt")) == "cloud" && File.Exists(f.Remote("cloud.txt")), result.Message);
+            Check(File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")), "new install did not establish a real baseline");
+        });
+        Test("Unix install restore refuses linked ancestors before creating directories", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            var external = System.IO.Path.Combine(f.Root, "external"); Directory.CreateDirectory(external);
+            var link = System.IO.Path.Combine(f.Root, "linked"); Directory.CreateSymbolicLink(link, external);
+            f.Request.LocalFolder = System.IO.Path.Combine(link, "new-mods");
+            var result = f.Service.RestoreAfterInstall(f.Request);
+            Check(!result.Success && !Directory.Exists(System.IO.Path.Combine(external, "new-mods")), "install restore followed an ancestor link while creating mods");
+        });
+        Test("install restore merges cloud and local mods then establishes ready baseline", f => {
+            f.Cloud("cloud.txt", "cloud"); f.Local("installed.txt", "installed");
+            var result = f.Service.RestoreAfterInstall(f.Request);
+            Check(result.Success && File.ReadAllText(f.Path("cloud.txt")) == "cloud" && File.ReadAllText(f.Remote("installed.txt")) == "installed", result.Message);
+            Check(File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")), "ready baseline missing");
+            var phases = new System.Collections.Generic.List<string>(); f.Request.Progress = p => phases.Add(p.Phase);
+            var second = f.Service.Synchronize(f.Request, _ => throw new Exception("ready sync prompted"));
+            Check(second.Success && !phases.Contains("check"), "normal sync repeated initial comparison");
+        });
+        Test("install restore archives exact completed pairing and preserves cloud deletion intent", f => {
+            f.Local("kept", "kept"); f.Local("deleted", "deleted"); f.Sync();
+            f.Service.Pause(f.Request.StateDirectory); Directory.Move(f.LocalRoot, f.LocalRoot + "-old");
+            Directory.CreateDirectory(f.LocalRoot); f.Local("fresh", "fresh");
+            var result = f.Service.RestoreAfterInstall(f.Request);
+            Check(result.Success && File.Exists(f.Path("kept")) && File.Exists(f.Path("deleted")) && File.Exists(f.Remote("fresh")), result.Message);
+            Check(Directory.GetDirectories(f.Root, "state.archive-*").Length == 1, "completed state not archived");
+            Check(File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")), "new baseline missing");
+        });
+        Test("install restore refuses differing local and cloud files", f => {
+            f.Local("same", "local"); f.Cloud("same", "remote");
+            var result = f.Service.RestoreAfterInstall(f.Request);
+            Check(!result.Success && File.ReadAllText(f.Path("same")) == "local" && File.ReadAllText(f.Remote("same")) == "remote", "restore overwrote conflict");
+        });
+        Test("install restore does not reset interrupted initial pairing", f => {
+            Directory.CreateDirectory(f.Request.StateDirectory);
+            File.WriteAllText(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt"), f.LocalRoot + "\\n" + f.Request.RemoteFolder);
+            f.Local("new", "new");
+            var result = f.Service.RestoreAfterInstall(f.Request);
+            Check(!result.Success && result.RequiresRelink && !File.Exists(f.Remote("new")), "interrupted pair was reset");
+        });
+        Test("install restore refuses mismatched state identity without archiving it", f => {
+            f.Local("existing", "existing"); f.Sync(); f.Service.Pause(f.Request.StateDirectory);
+            f.Request.RemoteFolder += "-changed";
+            var result = f.Service.RestoreAfterInstall(f.Request);
+            Check(!result.Success && Directory.GetDirectories(f.Root, "state.archive-*").Length == 0 && File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")), "mismatched pairing was archived or altered");
+        });
+        Test("install restore validates caller configuration", f => {
+            f.Local("local", "local"); f.Request.RemoteFolder = " ";
+            var result = f.Service.RestoreAfterInstall(f.Request);
+            Check(!result.Success && !Directory.Exists(f.Request.StateDirectory), "unconfigured caller changed state");
+        });
+        Test("install restore honors cancellation and retains retryable state", f => {
+            f.Local("new", "new");
+            using (var cts = new CancellationTokenSource()) {
+                cts.Cancel(); f.Request.CancellationToken = cts.Token;
+                var result = f.Service.RestoreAfterInstall(f.Request);
+                Check(result.Cancelled && !result.Success && !File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")), "cancel altered baseline");
+            }
+            f.Request.CancellationToken = CancellationToken.None;
+            Check(f.Service.RestoreAfterInstall(f.Request).Success, "retry after cancellation failed");
         });
         Test("explicit relink restores cloud mods after reinstall", f => {
             f.Local("a", "a"); f.Sync(); f.Service.Pause(f.Request.StateDirectory);

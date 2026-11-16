@@ -91,6 +91,7 @@ namespace PersonalCloudLibrarySource
             cancel.Visibility = progress.Active && progress.Phase == "RestoringMods" ? Visibility.Visible : Visibility.Collapsed;
             cancel.IsEnabled = progress.Active;
             retry.Visibility = progress.CanRetry ? Visibility.Visible : Visibility.Collapsed;
+            retry.Content = progress.RetryLabel ?? "Retry mods";
         }
 
         private static string PhaseName(string phase)

@@ -12,6 +12,7 @@ on:
       - tests/ModSync.Tests/**
       - tests/ModSyncUx.Tests/**
       - tests/InstallProgress.Tests/**
+      - tests/InstallModRestoration.Tests/**
       - tools/add-install-progress-to-theme.ps1
       - tools/test-install-progress-theme.py
       - tools/package-extension.ps1
@@ -32,6 +33,7 @@ on:
       - tests/ModSync.Tests/**
       - tests/ModSyncUx.Tests/**
       - tests/InstallProgress.Tests/**
+      - tests/InstallModRestoration.Tests/**
       - tools/add-install-progress-to-theme.ps1
       - tools/test-install-progress-theme.py
       - tools/package-extension.ps1
@@ -112,6 +114,9 @@ jobs:
 
       - name: Test mod sync interaction and progress presentation
         run: dotnet run --project tests/ModSyncUx.Tests/ModSyncUx.Tests.csproj --configuration Release
+
+      - name: Test composed installation mod restoration with isolated native rclone
+        run: dotnet run --project tests/InstallModRestoration.Tests/InstallModRestoration.Tests.csproj --configuration Release
 
       - name: Build, package and inspect Playnite plugin
         id: package
