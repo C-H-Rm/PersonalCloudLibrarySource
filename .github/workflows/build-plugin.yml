@@ -13,6 +13,8 @@ on:
       - tools/verify-package.ps1
       - tools/test-package-extension.ps1
       - tools/test-build-pipeline.py
+      - tools/publish-nightly.py
+      - tools/test-nightly-release.py
       - global.json
       - .github/workflows/build-plugin.yml
   pull_request:
@@ -26,6 +28,8 @@ on:
       - tools/verify-package.ps1
       - tools/test-package-extension.ps1
       - tools/test-build-pipeline.py
+      - tools/publish-nightly.py
+      - tools/test-nightly-release.py
       - global.json
       - .github/workflows/build-plugin.yml
 
@@ -34,13 +38,17 @@ permissions:
 
 concurrency:
   group: build-plugin-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Do not interrupt a main build while it is updating release assets.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     name: Build and verify .pext
     runs-on: windows-2022
     timeout-minutes: 20
+    outputs:
+      package_artifact_id: ${{ steps.upload_package.outputs.artifact-id }}
+      info_artifact_id: ${{ steps.upload_info.outputs.artifact-id }}
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       DOTNET_NOLOGO: '1'
@@ -60,6 +68,9 @@ jobs:
 
       - name: Test async cache controllers
         run: dotnet run --project tests/CacheControllers.Tests/CacheControllers.Tests.csproj --configuration Release
+
+      - name: Test nightly publication guards without network access
+        run: python -B tools/test-nightly-release.py
 
       - name: Test cache deletion safety
         run: dotnet run --project tests/CacheSafety.Tests/CacheSafety.Tests.csproj --configuration Release
@@ -90,6 +101,7 @@ jobs:
 
       # upload-artifact v7 can expose a single .pext directly, without an outer ZIP.
       - name: Upload installable Playnite file
+        id: upload_package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           path: ${{ steps.package.outputs.package_path }}
@@ -98,6 +110,7 @@ jobs:
           retention-days: 14
 
       - name: Upload checksum and build receipt
+        id: upload_info
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: PersonalCloudLibrarySource-build-info
@@ -106,3 +119,40 @@ jobs:
             ${{ steps.package.outputs.checksum_path }}
           if-no-files-found: error
           retention-days: 14
+
+  nightly:
+    name: Publish nightly prerelease
+    needs: build
+    if: >-
+      github.repository == 'C-H-Rm/PersonalCloudLibrarySource' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Check out the tested source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the exact installable file from this build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.build.outputs.package_artifact_id }}
+          path: dist
+          # A .pext is itself a ZIP: keep it intact for installation.
+          skip-decompress: true
+
+      - name: Download this build's checksum and source receipt
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.build.outputs.info_artifact_id }}
+          path: dist
+
+      - name: Publish and verify the managed nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B tools/publish-nightly.py --artifacts dist

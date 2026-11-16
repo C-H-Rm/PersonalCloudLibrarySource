@@ -42,6 +42,12 @@ This plugin does not provide games, ROMs, BIOS files, cracks, keys, copyrighted 
 
 It only catalogs user-supplied manifest entries and copies or downloads user-owned files from configured local folders or rclone remotes.
 
+## Nightly builds of this fork
+
+Download the latest development build from **[Releases → Nightly](https://github.com/C-H-Rm/PersonalCloudLibrarySource/releases/tag/nightly)**. Under **Assets**, download the `.pext` file and open it with Playnite; restart Playnite when prompted. The official add-on browser installs upstream, not this fork's development build.
+
+The existing verified Windows build updates this single prerelease after successful builds of `main` (including manual runs on `main`). Pull requests and failed builds cannot publish. The release includes the installable package, SHA-256 checksum and source build receipt. Release downloads do not have the Actions artifact retention deadline. Stable releases are not changed; this is not an automatic Playnite add-on update channel.
+
 ## Installation for Users
 
 The recommended way to install **Personal Cloud Library Source** is through Playnite's official add-on browser.
