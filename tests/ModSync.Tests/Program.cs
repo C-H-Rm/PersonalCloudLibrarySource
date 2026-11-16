@@ -254,6 +254,115 @@ internal static class Program
             f.Request.CancellationToken = CancellationToken.None;
             Check(f.Service.RestoreAfterInstall(f.Request).Success, "retry after cancellation failed");
         });
+        Test("install-only metadata audit lists names without hashes or transfer mutations", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            var audit = System.IO.Path.Combine(f.Root, "install-list-commands.txt");
+            var real = Environment.GetEnvironmentVariable("PCLS_RCLONE") ?? "rclone";
+            var wrapper = System.IO.Path.Combine(f.Root, "install-list-rclone.sh");
+            File.WriteAllText(wrapper, "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"" + audit + "\"\nexec \"" + real + "\" \"$@\"\n");
+            File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            f.Request.RcloneExecutable = wrapper;
+            var result = f.Service.DownloadAfterInstall(f.Request, _ => new ModSyncResult { Success = true });
+            Check(result.Success, result.Message);
+            var commands = File.ReadAllLines(audit);
+            Check(commands.Contains("lsf") && commands.Contains("--recursive") && commands.Contains("--files-only"), "metadata-only list absent");
+            Check(!commands.Contains("--hash") && !commands.Contains("lsjson") && !commands.Contains("check") &&
+                !commands.Contains("bisync") && !commands.Contains("copy") && !commands.Contains("copyto") && !commands.Contains("mkdir"),
+                "install listing invoked content comparison or mutation: " + string.Join(" ", commands));
+        });
+        Test("install-only treats only unpaired remote directory-not-found as a successful no-op", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            Directory.Delete(f.RemoteRoot, true);
+            var wrapper = System.IO.Path.Combine(f.Root, "missing-cloud-rclone.sh");
+            File.WriteAllText(wrapper, "#!/bin/sh\n[ \"$1\" = lsf ] && exit 3\nexit 90\n");
+            File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            f.Request.RcloneExecutable = wrapper;
+            var called = false;
+            var result = f.Service.DownloadAfterInstall(f.Request, _ => { called = true; return new ModSyncResult { Success = true }; });
+            Check(result.Success && !called && !Directory.Exists(f.RemoteRoot), "missing unpaired cloud path was not a no-op or remote mkdir occurred");
+            Check(!File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt")) && !File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")), "no-op initialized pairing");
+        });
+        Test("install-only does not treat missing cloud path as empty when old pairing exists", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            f.Local("tracked", "tracked");
+            Directory.CreateDirectory(f.Request.StateDirectory);
+            var identity = System.IO.Path.GetFullPath(f.LocalRoot) + "\n" + f.Request.RemoteFolder;
+            File.WriteAllText(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt"), identity);
+            File.WriteAllText(System.IO.Path.Combine(f.Request.StateDirectory, "ready"), "ready");
+            Directory.Delete(f.RemoteRoot, true);
+            var wrapper = System.IO.Path.Combine(f.Root, "missing-paired-cloud-rclone.sh");
+            File.WriteAllText(wrapper, "#!/bin/sh\n[ \"$1\" = lsf ] && exit 3\nexit 90\n");
+            File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            f.Request.RcloneExecutable = wrapper;
+            var called = false;
+            var result = f.Service.DownloadAfterInstall(f.Request, _ => { called = true; return new ModSyncResult { Success = true }; });
+            Check(!result.Success && !called && File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")), "missing paired cloud path bypassed protection");
+        });
+        Test("install-only download preserves cloud and local additions without creating a ready baseline", f => {
+            f.Cloud("cloud.txt", "cloud"); f.Local("local.txt", "local");
+            var callbackCalled = false;
+            var result = f.Service.DownloadAfterInstall(f.Request, request =>
+            {
+                callbackCalled = true;
+                var settings = new PersonalCloudLibrarySourceSettings { RcloneRemoteName = "fixture", RcloneExecutablePath = request.RcloneExecutable };
+                var copy = new RcloneFileCopier().CopyMissingRemoteDirectoryToLocalPath(settings, f.RemoteRoot, request.LocalFolder,
+                    request.CancellationToken, p => request.Progress?.Invoke(new ModSyncProgress { Phase = p.Phase, Bytes = p.CompletedBytes, TotalBytes = p.TotalBytes ?? 0, Percentage = p.Percentage }));
+                return new ModSyncResult { Success = copy.Succeeded, Cancelled = copy.Cancelled, Message = copy.Message };
+            });
+            Check(callbackCalled && result.Success, result.Message);
+            Check(File.Exists(f.Path("cloud.txt")) && File.ReadAllText(f.Path("local.txt")) == "local", "one-way install changed or omitted local files");
+            Check(File.ReadAllText(f.Remote("cloud.txt")) == "cloud" && !File.Exists(f.Remote("local.txt")), "install changed cloud contents or uploaded local additions");
+            Check(!File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")) && !File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt")), "install created pairing evidence");
+        });
+        Test("install-only download pauses completed identity before callback and preserves pair", f => {
+            f.Local("kept", "kept"); f.Sync();
+            var pair = File.ReadAllText(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt"));
+            var result = f.Service.DownloadAfterInstall(f.Request, _ =>
+            {
+                Check(File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "paused")), "pair was not paused under lock before download");
+                return new ModSyncResult { Success = false, Message = "fixture failure" };
+            });
+            Check(!result.Success && File.ReadAllText(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt")) == pair, "failure reset completed pairing");
+            Check(File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")), "failure removed ready evidence");
+        });
+        Test("install-only rejects mismatched identity before callback or data changes", f => {
+            f.Local("kept", "kept"); f.Sync(); f.Request.RemoteFolder += "-wrong";
+            var called = false;
+            var result = f.Service.DownloadAfterInstall(f.Request, _ => { called = true; return new ModSyncResult { Success = true }; });
+            Check(!result.Success && !called && File.Exists(f.Remote("kept")), "mismatched identity reached downloader");
+        });
+        Test("install-only permits safe download with incomplete identity without resetting it", f => {
+            Directory.CreateDirectory(f.Request.StateDirectory);
+            File.WriteAllText(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt"), f.LocalRoot + "\n" + f.Request.RemoteFolder);
+            f.Cloud("cloud", "cloud");
+            var result = f.Service.DownloadAfterInstall(f.Request, _ => new ModSyncResult { Success = true });
+            Check(result.Success && !File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")), "incomplete state was promoted");
+            Check(File.ReadAllText(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt")) == f.LocalRoot + "\n" + f.Request.RemoteFolder, "incomplete identity changed");
+        });
+        Test("install-only failed and cancelled callbacks retain retryable state", f => {
+            var failure = f.Service.DownloadAfterInstall(f.Request, _ => new ModSyncResult { Success = false, Message = "retry" });
+            Check(!failure.Success && !failure.Cancelled && failure.Message == "retry" && !File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")), "failure result/state incorrect");
+            using (var cts = new CancellationTokenSource()) {
+                f.Request.CancellationToken = cts.Token;
+                var cancelled = f.Service.DownloadAfterInstall(f.Request, _ => { cts.Cancel(); return new ModSyncResult { Success = false, Cancelled = true }; });
+                Check(cancelled.Cancelled && !cancelled.Success, "cancelled callback not reported");
+            }
+        });
+        Test("install-only rejects a Windows case alias before callback", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            f.Cloud("MOD.BIN", "cloud"); f.Local("mod.bin", "local");
+            var called = false;
+            var result = f.Service.DownloadAfterInstall(f.Request, _ => { called = true; return new ModSyncResult { Success = true }; });
+            Check(!result.Success && !called && File.ReadAllText(f.Path("mod.bin")) == "local", "case alias reached download");
+        });
+        Test("install-only validates launch and rejects linked ancestors before mkdir", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            var external = System.IO.Path.Combine(f.Root, "external-install"); Directory.CreateDirectory(external);
+            var link = System.IO.Path.Combine(f.Root, "linked-install"); Directory.CreateSymbolicLink(link, external);
+            f.Request.LocalFolder = System.IO.Path.Combine(link, "new-mods");
+            var result = f.Service.DownloadAfterInstall(f.Request, _ => new ModSyncResult { Success = true });
+            Check(!result.Success && !Directory.Exists(System.IO.Path.Combine(external, "new-mods")), "linked ancestor was followed");
+        });
         Test("explicit relink restores cloud mods after reinstall", f => {
             f.Local("a", "a"); f.Sync(); f.Service.Pause(f.Request.StateDirectory);
             Directory.Move(f.LocalRoot, f.LocalRoot + "-old");
@@ -406,6 +515,8 @@ internal static class Program
             LocalRoot = System.IO.Path.Combine(Root, "game", "Mods"); RemoteRoot = System.IO.Path.Combine(Root, "cloud", "games", "mods", "Game Name");
             Directory.CreateDirectory(LocalRoot); Directory.CreateDirectory(RemoteRoot);
             var launch = System.IO.Path.Combine(Root, "game", "game.exe"); File.WriteAllText(launch, "test fixture only");
+            var config = System.IO.Path.Combine(Root, "rclone.conf"); File.WriteAllText(config, "[fixture]\ntype = local\n");
+            Environment.SetEnvironmentVariable("RCLONE_CONFIG", config);
             Request = new ModSyncRequest { GameId = "fixture-game", LocalFolder = LocalRoot, RemoteFolder = ":local:" + RemoteRoot,
                 LaunchFile = launch, StateDirectory = System.IO.Path.Combine(Root, "state"),
                 RcloneExecutable = Environment.GetEnvironmentVariable("PCLS_RCLONE") ?? "rclone", TimeoutSeconds = 60 };
@@ -425,5 +536,16 @@ internal static class Program
             Check(result.Success, result.Message); return result;
         }
         public void Dispose() { /* Preserve isolated fixtures for inspecting failures. */ }
+    }
+}
+
+namespace PersonalCloudLibrarySource
+{
+    public class PersonalCloudLibrarySourceSettings
+    {
+        public string RcloneExecutablePath = Environment.GetEnvironmentVariable("PCLS_RCLONE") ?? "rclone";
+        public string RcloneRemoteName = "fixture";
+        public string RcloneManifestPath = "manifest.json";
+        public int RcloneTimeoutSeconds = 5, RcloneTransferInactivityTimeoutSeconds = 5;
     }
 }

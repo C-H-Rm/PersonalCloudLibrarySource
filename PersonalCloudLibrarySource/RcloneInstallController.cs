@@ -17,15 +17,18 @@ namespace PersonalCloudLibrarySource
         private readonly RcloneFileCopier rcloneFileCopier;
         private readonly LocalFileCopier localFileCopier;
         private readonly Func<CancellationToken, Action<ModSyncProgress>, bool, Task<ModSyncResult>> restoreMods;
+        private readonly Action startBackgroundMods;
 
         public RcloneInstallController(Game game, PersonalCloudLibraryItem item,
             PersonalCloudLibrarySourceSettings settings, RcloneFileCopier rcloneFileCopier,
             LocalFileCopier localFileCopier,
-            Func<CancellationToken, Action<ModSyncProgress>, bool, Task<ModSyncResult>> restoreMods = null) : base(game)
+            Func<CancellationToken, Action<ModSyncProgress>, bool, Task<ModSyncResult>> restoreMods = null,
+            Action startBackgroundMods = null) : base(game)
         {
             this.item = item; this.settings = settings;
             this.rcloneFileCopier = rcloneFileCopier; this.localFileCopier = localFileCopier;
             this.restoreMods = restoreMods;
+            this.startBackgroundMods = startBackgroundMods;
             Name = "Download to local cache";
         }
 
@@ -33,6 +36,7 @@ namespace PersonalCloudLibrarySource
         {
             if (!InstallProgressState.Shared.TryBegin(Game.Id, out var operation)) return;
             var installed = false;
+            var modsDownloaded = false;
             try
             {
                 Game.IsInstalling = true;
@@ -78,8 +82,14 @@ namespace PersonalCloudLibrarySource
                 Game.GameActions.Add(new GameAction { Name = "Play", Type = GameActionType.File,
                     Path = launchPath, WorkingDir = installDirectory, IsPlayAction = true });
                 installed = true;
-                if (ShouldRestoreMods()) FinishMods(operation, await RestoreMods(operation, false));
+                if (ShouldRestoreMods())
+                {
+                    var result = await RestoreMods(operation);
+                    modsDownloaded = result?.Success == true && !result.HasConflicts;
+                    FinishMods(operation, result);
+                }
                 else operation.Finish("Complete");
+                Game.IsInstalling = false;
                 InvokeOnInstalled(new GameInstalledEventArgs(new GameInstallationData { InstallDirectory = installDirectory }));
                 logger.Info($"Personal Cloud Library Source downloaded item {item.Id} to local cache.");
             }
@@ -102,6 +112,11 @@ namespace PersonalCloudLibrarySource
                 }
                 catch (Exception ex) { logger.Error(ex, "Could not finish cached install state."); }
                 operation.Dispose();
+                if (installed && modsDownloaded)
+                {
+                    try { startBackgroundMods?.Invoke(); }
+                    catch (Exception ex) { logger.Error(ex, "Game installed, but background mod work could not be queued."); }
+                }
             }
         }
 
@@ -109,15 +124,16 @@ namespace PersonalCloudLibrarySource
             !string.IsNullOrWhiteSpace(item.ModPath) && string.Equals(PersonalCloudLibrarySource.GetProviderType(settings),
                 PersonalCloudLibrarySourceSettings.RcloneRemoteProviderType, StringComparison.OrdinalIgnoreCase);
 
-        private async Task<ModSyncResult> RestoreMods(InstallProgressSession operation, bool recover)
+        private async Task<ModSyncResult> RestoreMods(InstallProgressSession operation)
         {
-            operation.Report("RestoringMods", message: recover ? "Recovering mod synchronization" : "Restoring and linking cloud mods");
+            operation.Report("DownloadingMods", message: "Downloading cloud mods — no two-way synchronization");
             try
             {
-                return await restoreMods(operation.CancellationToken, progress => operation.Report("RestoringMods",
+                return await restoreMods(operation.CancellationToken, progress => operation.Report("DownloadingMods",
                     progress.Bytes, progress.TotalBytes > 0 ? (long?)progress.TotalBytes : null, progress.BytesPerSecond,
+                    percentage: progress.Percentage,
                     message: ModSyncUserInteraction.ProgressText(progress.Phase, 0, 0,
-                        progress.Checks, progress.TotalChecks, 0)), recover);
+                        progress.Checks, progress.TotalChecks, 0)), false);
             }
             catch (OperationCanceledException) { return new ModSyncResult { Cancelled = true, Message = "Mod restoration cancelled; the game remains installed." }; }
             catch (Exception ex) { return new ModSyncResult { Message = ex.Message }; }
@@ -126,17 +142,18 @@ namespace PersonalCloudLibrarySource
         private void FinishMods(InstallProgressSession operation, ModSyncResult result)
         {
             if (result == null || result.Success && !result.HasConflicts) { operation.Finish("Complete"); return; }
-            var recovery = result.RequiresRelink;
+
             var diagnostic = string.IsNullOrWhiteSpace(result.DiagnosticPath) ? "" : "\nDiagnostics: " + result.DiagnosticPath;
-            var consent = recovery ? "\nRecover mods archives the old sync setup and merges these folders; it does not silently overwrite differing files." : "";
+
             operation.Finish(result.Cancelled ? "Cancelled" : "Failed",
-                "Game installed; mods need attention. " + result.Message + consent + diagnostic,
-                () => RetryMods(recovery), recovery ? "Recover mods" : "Retry mods");
+                "Game installed; mod download needs attention. " + result.Message + diagnostic,
+                RetryMods, "Retry mods");
         }
 
-        private async void RetryMods(bool recover)
+        private async void RetryMods()
         {
             if (!InstallProgressState.Shared.TryBegin(Game.Id, out var operation)) return;
+            var downloaded = false;
             try
             {
                 if (!Game.IsInstalled || !ShouldRestoreMods())
@@ -145,14 +162,24 @@ namespace PersonalCloudLibrarySource
                     return;
                 }
                 Game.IsInstalling = true;
-                FinishMods(operation, await RestoreMods(operation, recover));
+                var result = await RestoreMods(operation);
+                downloaded = result?.Success == true && !result.HasConflicts;
+                FinishMods(operation, result);
             }
             catch (Exception ex)
             {
                 operation.Finish("Failed", "Could not retry mods: " + ex.Message);
                 logger.Error(ex, "Optional mod-only retry failed.");
             }
-            finally { Game.IsInstalling = false; operation.Dispose(); }
+            finally
+            {
+                Game.IsInstalling = false; operation.Dispose();
+                if (downloaded)
+                {
+                    try { startBackgroundMods?.Invoke(); }
+                    catch (Exception ex) { logger.Error(ex, "Could not start background mods after download-only retry."); }
+                }
+            }
         }
     }
 }

@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading;
@@ -211,6 +212,39 @@ internal static class Program
                 Check(result.Result.Cancelled && !result.Result.Succeeded, "native cancellation was not distinguished from failure");
             }
             finally { Environment.SetEnvironmentVariable("RCLONE_BWLIMIT", previous); }
+        });
+        Test("install-only directory copy downloads missing files and excludes reserved markers", f =>
+        {
+            var source = Path.Combine(f.Root, "install-cloud");
+            var target = Path.Combine(f.Root, "install-local");
+            Directory.CreateDirectory(source); Directory.CreateDirectory(target);
+            File.WriteAllText(Path.Combine(source, "new.bin"), "cloud new");
+            File.WriteAllText(Path.Combine(source, "changed.bin"), "cloud changed");
+            File.WriteAllText(Path.Combine(source, ".pcls-modsync-reserved"), "marker");
+            File.WriteAllText(Path.Combine(target, "changed.bin"), "local wins");
+            var result = f.Copier.CopyMissingRemoteDirectoryToLocalPath(f.Settings, source, target, CancellationToken.None, null);
+            Check(result.Succeeded, result.Message);
+            Check(File.ReadAllText(Path.Combine(target, "new.bin")) == "cloud new", "missing cloud file not downloaded");
+            Check(File.ReadAllText(Path.Combine(target, "changed.bin")) == "local wins", "existing local file overwritten");
+            Check(!File.Exists(Path.Combine(target, ".pcls-modsync-reserved")), "reserved marker was copied");
+            Check(File.ReadAllText(Path.Combine(source, "changed.bin")) == "cloud changed", "cloud changed");
+        });
+        Test("install-only command audit is copy-only with no content check or upload", f =>
+        {
+            if (!OperatingSystem.IsLinux()) return;
+            var source = Path.Combine(f.Root, "audit-cloud"); var target = Path.Combine(f.Root, "audit-local");
+            Directory.CreateDirectory(source); Directory.CreateDirectory(target); File.WriteAllText(Path.Combine(source, "new"), "new");
+            var audit = Path.Combine(f.Root, "commands.txt");
+            var real = Environment.GetEnvironmentVariable("PCLS_RCLONE") ?? "rclone";
+            var wrapper = Path.Combine(f.Root, "audit-rclone.sh");
+            File.WriteAllText(wrapper, "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"" + audit + "\"\nexec \"" + real + "\" \"$@\"\n");
+            File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            f.Settings.RcloneExecutablePath = wrapper;
+            var result = f.Copier.CopyMissingRemoteDirectoryToLocalPath(f.Settings, source, target, CancellationToken.None, null);
+            Check(result.Succeeded, result.Message);
+            var args = File.ReadAllLines(audit);
+            Check(args.Contains("copy") && args.Contains("--ignore-existing") && args.Contains("--exclude") && args.Contains(".pcls-modsync-*"), "safe copy flags absent: " + string.Join(" ", args));
+            Check(!args.Contains("bisync") && !args.Contains("--download") && !args.Contains("copyto") && !args.Contains("sync"), "install command audit found a comparison or upload: " + string.Join(" ", args));
         });
         Test("watchdog follows real progress rather than total elapsed time", f =>
         {

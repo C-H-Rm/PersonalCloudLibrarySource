@@ -227,25 +227,53 @@ class Program
             Check(copies == 1 && mods == 2 && installed == 1 && cancelled == 0 && InstallProgressState.Shared.Get(f.Game.Id) == null,
                 "mod retry repeated base download/install event or left progress busy");
         });
-        Test("interrupted mod setup requires a separately labelled explicit recovery action", () =>
+        Test("install mod retry never starts recovery or two-way synchronization", () =>
         {
             using var f = new Fixture(); f.Game.IsInstalled = false; f.Item.ModPath = "Mods";
             int calls = 0, copies = 0;
             var c = f.Installer(() => { copies++; return new CopyResult { Succeeded = true }; }, (token, progress, recover) =>
             {
-                Check(recover == (calls > 0), "recovery was implicitly approved or explicit action ignored");
+                Check(!recover, "installation retry requested two-way recovery");
                 calls++;
                 return Task.FromResult(calls == 1 ? new ModSyncResult { RequiresRelink = true, Message = "interrupted setup" } :
                     new ModSyncResult { Success = true });
             });
             c.Install(new InstallActionArgs()); context.Until(() => !f.Game.IsInstalling);
             var status = InstallProgressState.Shared.Get(f.Game.Id);
-            Check(calls == 1 && status.RetryLabel == "Recover mods" && status.Message.Contains("archives") && status.Message.Contains("merges"),
-                "recovery consent was automatic, hidden, or misleading");
+            Check(calls == 1 && status.RetryLabel == "Retry mods" && !status.Message.Contains("archives"),
+                "download failure exposed a baseline reset instead of download-only retry");
             Check(InstallProgressState.Shared.Retry(f.Game.Id), "explicit recovery unavailable");
             context.Until(() => !f.Game.IsInstalling);
             Check(calls == 2 && copies == 1 && f.Game.IsInstalled && InstallProgressState.Shared.Get(f.Game.Id) == null,
                 "recovery redownloaded game or left mod progress stuck");
+        });
+        Test("background mods start only after Installed and cleared installation state", () =>
+        {
+            using var f = new Fixture(); f.Game.IsInstalled = false; f.Item.ModPath = "Mods";
+            int installed = 0, backgroundStarted = 0;
+            var unfinishedBackground = new TaskCompletionSource<bool>();
+            var c = f.Installer(() => new CopyResult { Succeeded = true },
+                (token, progress, recover) => Task.FromResult(new ModSyncResult { Success = true }), () =>
+                {
+                    Check(installed == 1 && !f.Game.IsInstalling && f.Game.IsInstalled, "background started before install completion");
+                    Check(InstallProgressState.Shared.Get(f.Game.Id) == null, "install session still owned by background starter");
+                    backgroundStarted++;
+                    _ = unfinishedBackground.Task; // Explicit blocked background double; must not be awaited by Install.
+                });
+            c.Installed = () => { Check(!f.Game.IsInstalling, "Installed emitted while game still marked installing"); installed++; };
+            c.Install(new InstallActionArgs()); context.Until(() => backgroundStarted == 1);
+            Check(!unfinishedBackground.Task.IsCompleted && installed == 1 && !f.Game.IsInstalling,
+                "background work blocked completion");
+        });
+        Test("failed optional download never queues background sync", () =>
+        {
+            using var f = new Fixture(); f.Game.IsInstalled = false; f.Item.ModPath = "Mods";
+            int background = 0, installed = 0;
+            var c = f.Installer(() => new CopyResult { Succeeded = true },
+                (token, progress, recover) => Task.FromResult(new ModSyncResult { Message = "download failed" }), () => background++);
+            c.Installed = () => installed++;
+            c.Install(new InstallActionArgs()); context.Until(() => !f.Game.IsInstalling);
+            Check(installed == 1 && background == 0 && f.Game.IsInstalled, "failure queued two-way work or lost base game");
         });
         Test("active inline mod restoration can be cancelled without uninstalling the game", () =>
         {
@@ -259,7 +287,7 @@ class Program
             });
             c.Installed = () => installed++; c.Cancelled = () => cancelled++;
             c.Install(new InstallActionArgs());
-            context.Until(() => InstallProgressState.Shared.Get(f.Game.Id)?.Phase == "RestoringMods");
+            context.Until(() => InstallProgressState.Shared.Get(f.Game.Id)?.Phase == "DownloadingMods");
             var status = InstallProgressState.Shared.Get(f.Game.Id);
             Check(f.Game.IsInstalled && f.Game.IsInstalling && installed == 0 && status.Percentage == null,
                 "mod stage lost base game or invented a combined-stage percentage");
@@ -397,8 +425,8 @@ class Program
         }
         public PersonalCloudLibraryUninstallController Controller(Action before = null) => new PersonalCloudLibraryUninstallController(Api, Game, Item, Settings, before ?? (() => Paused++));
         public RcloneInstallController Installer(Func<CopyResult> copy,
-            Func<CancellationToken, Action<ModSyncProgress>, bool, Task<ModSyncResult>> mods = null) =>
-            new RcloneInstallController(Game, Item, Settings, new RcloneFileCopier { Copy = copy }, new LocalFileCopier { Copy = copy }, mods);
+            Func<CancellationToken, Action<ModSyncProgress>, bool, Task<ModSyncResult>> mods = null, Action background = null) =>
+            new RcloneInstallController(Game, Item, Settings, new RcloneFileCopier { Copy = copy }, new LocalFileCopier { Copy = copy }, mods, background);
         public PersonalCloudLibrarySource.PersonalCloudLibrarySource MenuPlugin(string json)
         {
             var plugin = new PersonalCloudLibrarySource.PersonalCloudLibrarySource { ModManifestPath = Path.Combine(Folder, "manifest.json") };

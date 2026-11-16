@@ -21,10 +21,15 @@ namespace PersonalCloudLibrarySource
 
         public RcloneCopyResult CopyRemoteDirectoryToLocalPath(PersonalCloudLibrarySourceSettings settings, string remotePath,
             string localDirectoryPath, CancellationToken cancellationToken, Action<RcloneTransferProgress> progress)
-            => Copy(settings, remotePath, localDirectoryPath, true, cancellationToken, progress);
+            => Copy(settings, remotePath, localDirectoryPath, true, cancellationToken, progress, false);
+
+        public RcloneCopyResult CopyMissingRemoteDirectoryToLocalPath(PersonalCloudLibrarySourceSettings settings, string remotePath,
+            string localDirectoryPath, CancellationToken cancellationToken, Action<RcloneTransferProgress> progress)
+            => Copy(settings, remotePath, localDirectoryPath, true, cancellationToken, progress, true);
 
         private static RcloneCopyResult Copy(PersonalCloudLibrarySourceSettings settings, string remotePath,
-            string destination, bool isDirectory, CancellationToken cancellationToken, Action<RcloneTransferProgress> progressCallback)
+            string destination, bool isDirectory, CancellationToken cancellationToken, Action<RcloneTransferProgress> progressCallback,
+            bool onlyMissing = false)
         {
             if (settings == null) throw new ArgumentNullException(nameof(settings));
             if (string.IsNullOrWhiteSpace(remotePath)) return RcloneCopyResult.Fail("Remote path is empty.");
@@ -72,7 +77,8 @@ namespace PersonalCloudLibrarySource
                             " --check-first --use-json-log --stats=1s --stats-log-level=NOTICE" +
                             " --contimeout=" + connectSeconds.ToString(CultureInfo.InvariantCulture) + "s" +
                             " --timeout=" + inactiveSeconds.ToString(CultureInfo.InvariantCulture) + "s" +
-                            (isDirectory ? " --retries 5 --low-level-retries 20" : string.Empty),
+                            (isDirectory ? " --retries 5 --low-level-retries 20" : string.Empty) +
+                            (onlyMissing ? " --ignore-existing --exclude \".pcls-modsync-*\"" : string.Empty),
                         UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true
                     };
                     process.OutputDataReceived += (_, args) => Capture(output, args.Data, logGate, timeout, timer, null, null, null);

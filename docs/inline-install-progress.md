@@ -9,7 +9,7 @@ The plugin offers the supported Playnite custom element **`PCLS_InstallProgress`
 - A metadata/check-first pass must not download whole files merely to calculate their sizes. Already cached/skipped files must not inflate the remaining download.
 - Only successful transfer completion can reach 100%; final executable/install-state validation remains a separately labelled finishing step.
 - A retry counter reset keeps the original total but shows an explicit retry phase without an unreliable overall percentage; it does not disguise retransferred bytes behind a high-water percentage.
-- Optional mod restoration uses the same status area as a separate named phase. It must not silently redefine a game download's denominator or present an invented combined percentage for unequal stages.
+- The optional cloud-to-local mod download uses the same area as a separately named phase. It performs no two-way initialization on the install critical path. Only after the SDK Installed event and cleared installation state may separately cancellable background synchronization begin; its phase must not redefine the game's denominator or keep the game marked as installing.
 - Routine results do not need an extra modal window. A base-download failure remains visible with its error; use Playnite's installation action to retry. Completed status is removed.
 
 ## Required theme integration

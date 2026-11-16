@@ -6,8 +6,15 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../PersonalCloudLibrarySource/InstallModRestoration.cs" Link="InstallModRestoration.cs" />
+    <Compile Include="../../PersonalCloudLibrarySource/InstallModBackground.cs" Link="InstallModBackground.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/ModSyncUserInteraction.cs" Link="ModSyncUserInteraction.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/ModSyncService.cs" Link="ModSyncService.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/ModSyncProcess.cs" Link="ModSyncProcess.cs" />
+    <Compile Include="../../PersonalCloudLibrarySource/PostInstallModSyncQueue.cs" Link="PostInstallModSyncQueue.cs" />
+    <Compile Include="../../PersonalCloudLibrarySource/InstallProgressState.cs" Link="InstallProgressState.cs" />
+    <Compile Include="../../PersonalCloudLibrarySource/RcloneFileCopier.cs" Link="RcloneFileCopier.cs" />
+    <Compile Include="../../PersonalCloudLibrarySource/RcloneTransferProgress.cs" Link="RcloneTransferProgress.cs" />
+    <Compile Include="../../PersonalCloudLibrarySource/RcloneActivityTimeout.cs" Link="RcloneActivityTimeout.cs" />
+    <Compile Include="../../PersonalCloudLibrarySource/RcloneManifestReader.cs" Link="RcloneManifestReader.cs" />
   </ItemGroup>
 </Project>

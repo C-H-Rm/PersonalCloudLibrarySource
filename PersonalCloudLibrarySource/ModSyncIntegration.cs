@@ -34,11 +34,18 @@ namespace PersonalCloudLibrarySource
         public override void OnGameStarting(OnGameStartingEventArgs args)
         {
             if (args.CancelStartup) return;
-            if (args.Game?.PluginId == Id && InstallProgressState.Shared.Get(args.Game.Id)?.Active == true)
+            var installStatus = args.Game == null ? null : InstallProgressState.Shared.Get(args.Game.Id);
+            if (args.Game?.PluginId == Id && installStatus?.Active == true && installStatus.Phase != "BackgroundModSync")
             {
                 args.CancelStartup = true;
                 NotifyModSync(args.Game, new ModSyncResult { Message = "Installation or mod restoration is still active. Wait for it to finish or cancel mod restoration first." });
                 return;
+            }
+            if (args.Game?.PluginId == Id && DeferInstallBackgroundModsForLaunch(args.Game, out var stopped))
+            {
+                args.CancelStartup = !stopped;
+                if (!stopped) NotifyModSync(args.Game, new ModSyncResult { Message = "Background mod work is stopping. Try Play again once it finishes." });
+                return; // Use just-downloaded mods; do not restart foreground bisync here.
             }
             var result = RunModSync(args.Game, false, false, false);
             // Cancel means cancel this launch, not start silently with unchecked mods.
@@ -49,7 +56,14 @@ namespace PersonalCloudLibrarySource
 
         public override void OnGameStopped(OnGameStoppedEventArgs args)
         {
+            if (args.Game?.PluginId == Id && (postInstallModSync.Contains(args.Game.Id) || HasPendingInstallModSync(args.Game.Id)))
+            { StartInstallBackgroundModSync(args.Game, true); return; }
             RunModSync(args.Game, true, false, false);
+        }
+
+        public override void OnApplicationStopped(OnApplicationStoppedEventArgs args)
+        {
+            postInstallModSync.CancelAll();
         }
 
         private ModSyncResult RunModSync(Game game, bool justStopped, bool manual, bool relink)
@@ -140,6 +154,7 @@ namespace PersonalCloudLibrarySource
             }
             catch (Exception ex) { result = new ModSyncResult { Success = false, Message = ex.Message }; }
             finally { modSyncGate.Release(); }
+            if (result.Success && !result.HasConflicts) SetInstallModSyncPending(game.Id, false);
             logger.Info("Mod sync for " + game.GameId + ": " + result.Message);
             if (manual || (justStopped && !result.Success) || result.HasConflicts) NotifyModSync(game, result);
             return result;

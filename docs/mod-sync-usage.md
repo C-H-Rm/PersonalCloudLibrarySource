@@ -2,15 +2,19 @@
 
 Enable mod sync in the plugin settings and update the game library after adding or changing a game's `modPath`. Right-click one game owned by this library and choose **Personal Cloud Library → Sync mods**. Games without a configured `modPath` do not participate.
 
-## Automatic restoration during installation
+## Download mods first; synchronize after installation
 
-With Mod Sync enabled, the RcloneRemote installer restores optional cloud mods **after** the base game has downloaded successfully, and only for a game with a nonblank configured `modPath`. The imported roots are captured before the base download and compared with the live manifest again before any mod writes. No ordinary installation confirmation or separate global-progress window is required; the inline status control needs the [theme integration](inline-install-progress.md).
+With Mod Sync enabled and a nonblank per-game `modPath`, installation **only downloads cloud mods to the local mod folder**. It does not upload local files, delete files, perform an initial content comparison, or run bisync/relink on the installation critical path. Filename/size metadata inventory and transferred-file integrity checks remain; those are not a two-way comparison. Existing local files are preserved with `--ignore-existing`; any differences are reviewed later, not silently overwritten. Reserved synchronization markers are not downloaded as ordinary mods.
 
-A genuinely new missing local mods folder is created for this installation, not interpreted as a request to delete cloud mods. A completed prior pairing at the exact same local/cloud identity is archived before a deliberate reinstall establishes a fresh merge baseline. An interrupted initial pairing is never reset automatically. Differing existing files and names differing only by case (ambiguous on Windows) are refused, not silently overwritten. A successful restore leaves a real rclone baseline, so the next ordinary sync does not repeat initial pairing/comparison.
+The imported mapping is captured before the base-game copy and compared with a freshly loaded live manifest before writing mods. Path/link/name-collision protections and the local operation lock remain. A failed or cancelled mod download keeps the base game installed and offers a **download-only Retry mods** action. This action never authorizes recovery or baseline reset.
 
-If optional mods fail or are cancelled, the base game **stays installed**. The inline status offers **Retry mods**, without redownloading the game. An interrupted setup offers **Recover mods** instead; its actual archive/merge confirmation is still asked explicitly on the UI, outside the worker/lock. Dismissing recovery does not grant future permission. Once this installation has established a baseline, a mod-only retry uses ordinary synchronization rather than initializing again. Potential whole-folder clears still need the normal **Sync mods** confirmation.
+After the download finishes, the controller clears `IsInstalling` and emits the SDK **Installed** event. Only then does a separate background queue begin the two-way work. Installation does not await that queue. Background status has an actionable cancellation notification; it is not a separate global-progress popup. Theme-host integration is still required for the optional inline status control.
 
-The initial content preflight uses SHA-1/MD5 only when the particular overlapping objects expose a compatible nonempty hash; advertised backend support alone is insufficient. Missing/mixed native hashes fall back to actual-content comparison. This can avoid an extra cloud-content read during initial verification; it is not a guarantee that every bisync phase or every backend performs zero reads, nor a measurement of the user's Nextcloud.
+Completed matching old pairing state is retained/paused during download so removed cache files cannot be propagated as cloud deletions. The later background initializer may archive that completed state and establish a real new bisync baseline. Interrupted initial state is retained for explicit recovery; no `ready` file or baseline is fabricated by downloading. Background conflicts/failures do not uninstall the game or trigger an automatic resync loop; review the normal Sync mods action when needed.
+
+Launching the just-installed game defers pending background work or cancels/drains an active background worker before launch, without restarting the initial comparison in the foreground. Pending work resumes after the game stops. The queue is local to the running plugin, not a persistent external scheduler; stopping Playnite cancels its work.
+
+The native per-object hash optimization applies to the later initial-sync comparison, not to the installation download. The background phase can still be expensive on a backend without native hashes. No particular Nextcloud throughput is promised by local fixture tests.
 
 ## Progress and cancellation
 

@@ -88,7 +88,7 @@ namespace PersonalCloudLibrarySource
             bar.IsIndeterminate = !progress.Percentage.HasValue && progress.Active;
             bar.Value = progress.Percentage ?? 0;
             bar.Visibility = progress.Active ? Visibility.Visible : Visibility.Collapsed;
-            cancel.Visibility = progress.Active && progress.Phase == "RestoringMods" ? Visibility.Visible : Visibility.Collapsed;
+            cancel.Visibility = progress.Active && (progress.Phase == "DownloadingMods" || progress.Phase == "BackgroundModSync") ? Visibility.Visible : Visibility.Collapsed;
             cancel.IsEnabled = progress.Active;
             retry.Visibility = progress.CanRetry ? Visibility.Visible : Visibility.Collapsed;
             retry.Content = progress.RetryLabel ?? "Retry mods";
@@ -102,7 +102,8 @@ namespace PersonalCloudLibrarySource
                 case "Downloading": return "Downloading game";
                 case "Finishing": return "Checking installation";
                 case "Retrying": return "Retrying download — original total unchanged";
-                case "RestoringMods": return "Restoring and linking mods";
+                case "DownloadingMods": return "Downloading cloud mods";
+                case "BackgroundModSync": return "Game installed — synchronizing mods in the background";
                 case "Cancelled": return "Cancelled — completed files are retained";
                 case "Failed": return "Installation needs attention";
                 default: return phase ?? "Installing";

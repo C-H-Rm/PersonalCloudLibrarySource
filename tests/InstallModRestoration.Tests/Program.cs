@@ -23,8 +23,15 @@ internal static class Program
         Run("fresh live mapping mismatch and offline manifest refuse before writes", FreshMappingRequired);
         Run("callback observes replacement settings instance", SettingsReplacementObserved);
         await RunAsync("gate wait cancellation neither over-releases nor leaks the operation gate", GateCancellation);
-        await RunAsync("restore has no ordinary UI confirmation; recovery decline is UI-pumped outside worker and lock", ConfirmationBoundaries);
-        await RunAsync("successful factory restore followed by normal retry uses existing deletion baseline", RestoreThenRetry);
+        await RunAsync("installation only downloads missing cloud mods, never compares or uploads", DownloadOnly);
+        await RunAsync("two-way initialization starts only when background queue is explicitly started", DownloadThenBackground);
+        await RunAsync("launch defers pending background work until explicit post-game resume", LaunchDefersBackground);
+        await RunAsync("actual background adapter observes native work and clears status without setting installing", BackgroundAdapter);
+        await RunAsync("notification rendering failure does not orphan background native work", BackgroundNotificationFailure);
+        await RunAsync("background notification cancellation reaches the actual factory manifest token", BackgroundNotificationCancellation);
+        await RunAsync("actual launch barrier cancels and drains background work without UI deadlock", BackgroundLaunchBarrier);
+        await RunAsync("failed background work retains a launch barrier until explicit review", FailedBackgroundLaunchBarrier);
+        await RunAsync("failed mod download cannot trigger foreground initialization on launch", FailedDownloadLaunchBarrier);
         Console.WriteLine($"InstallModRestoration composed tests: {passed} passed, {failed} failed");
         return failed == 0 ? 0 : 1;
     }
@@ -116,35 +123,25 @@ internal static class Program
         Check(retry != null, "callback could not retry after cancelled wait");
     }
 
-    private static async Task ConfirmationBoundaries()
+    private static async Task DownloadOnly()
     {
-        using (var f = new Fixture())
-        {
-            var callback = f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings());
-            var result = await callback(CancellationToken.None, null, false);
-            Check(result.Success, "ordinary install restoration failed: " + result.Message);
-            Check(f.Source.ConfirmCalls == 0, "ordinary restore showed UI confirmation");
-        }
-        using (var f = new Fixture())
-        {
-            var callback = f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings());
-            Directory.CreateDirectory(f.State);
-            File.WriteAllText(Path.Combine(f.State, "paused"), "paused after uninstall");
-            f.Source.ConfirmHandler = message =>
-            {
-                Check(Environment.CurrentManagedThreadId == f.UiThread, "recovery prompt did not run on pumped UI context");
-                Check(f.Source.Gate.CurrentCount == 1, "recovery prompt ran while operation gate held");
-                Check(message.Contains("Explicitly relink"), "unexpected recovery question");
-                return false;
-            };
-            var result = await callback(CancellationToken.None, null, true);
-            Check(f.Source.ConfirmCalls == 1 && result.Cancelled && result.RequiresRelink, "declined recovery did not return cancelled/relink result");
-            Check(File.Exists(Path.Combine(f.State, "paused")), "declined recovery altered paused state");
-            Check(Directory.GetFiles(f.Cloud, "*", SearchOption.AllDirectories).Length == 0, "declined recovery altered cloud files");
-        }
+        using var f = new Fixture();
+        File.WriteAllText(Path.Combine(f.Local, "existing.txt"), "local");
+        File.WriteAllText(Path.Combine(f.Cloud, "existing.txt"), "cloud");
+        File.WriteAllText(Path.Combine(f.Cloud, "new.txt"), "download");
+        File.WriteAllText(Path.Combine(f.Local, "local-only.txt"), "keep local");
+        var callback = f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings());
+        var phases = new List<string>();
+        var result = await callback(CancellationToken.None, p => phases.Add(p.Phase), true);
+        Check(result.Success, result.Message);
+        Check(File.ReadAllText(Path.Combine(f.Local, "new.txt")) == "download", "cloud mod not downloaded");
+        Check(File.ReadAllText(Path.Combine(f.Local, "existing.txt")) == "local", "existing local file overwritten");
+        Check(!File.Exists(Path.Combine(f.Cloud, "local-only.txt")) && File.ReadAllText(Path.Combine(f.Cloud, "existing.txt")) == "cloud", "download wrote cloud data");
+        Check(!File.Exists(Path.Combine(f.State, "ready")) && !File.Exists(Path.Combine(f.State, "pair.txt")), "download initialized bidirectional state");
+        Check(!phases.Contains("check") && !phases.Contains("bisync") && f.Source.ConfirmCalls == 0, "download compared contents or asked sync consent");
     }
 
-    private static async Task RestoreThenRetry()
+    private static async Task DownloadThenBackground()
     {
         using var f = new Fixture();
         Directory.CreateDirectory(f.Cloud);
@@ -155,16 +152,104 @@ internal static class Program
         var first = await callback(CancellationToken.None, p => phases.Add(p.Phase), false);
         Check(first.Success, "restore failed: " + first.Message);
         Check(File.ReadAllText(Path.Combine(f.Local, "from-cloud.txt")) == "cloud", "cloud restore missing");
-        Check(File.Exists(Path.Combine(f.Cloud, "from-install.txt")), "installed mods did not upload");
-        Check(File.Exists(Path.Combine(f.State, "ready")), "restore did not establish ready baseline");
-        var secondPhases = new List<string>();
-        var second = await callback(CancellationToken.None, p => secondPhases.Add(p.Phase), false);
-        Check(second.Success, "same callback normal retry failed: " + second.Message);
-        Check(!secondPhases.Contains("check"), "normal retry repeated initial comparison/baseline setup");
+        Check(!File.Exists(Path.Combine(f.Cloud, "from-install.txt")), "local mods uploaded on install critical path");
+        Check(!File.Exists(Path.Combine(f.State, "ready")), "download initialized sync instead of queuing it");
+        Check(f.Source.Queue.Contains(f.Game.Id), "successful download did not register pending background sync");
+        var second = await f.Source.Queue.Start(f.Game.Id);
+        Check(second.Success && File.Exists(Path.Combine(f.State, "ready")), "explicit background initialization failed: " + second.Message);
+        Check(File.Exists(Path.Combine(f.Cloud, "from-install.txt")), "background sync did not merge local-only mods");
         File.Delete(Path.Combine(f.Local, "from-install.txt"));
-        var deletion = await callback(CancellationToken.None, null, false);
+        var deletion = f.Source.SyncExisting();
         Check(deletion.Success && !File.Exists(Path.Combine(f.Cloud, "from-install.txt")), "normal retry did not apply established deletion baseline");
-        Check(Directory.GetDirectories(f.Root, "state.archive-*").Length == 0, "normal retry archived/reinitialized baseline");
+        Check(!f.Source.Queue.Contains(f.Game.Id), "finished background work left the game queued");
+    }
+
+    private static async Task LaunchDefersBackground()
+    {
+        using var f = new Fixture(); File.WriteAllText(Path.Combine(f.Cloud, "mod.txt"), "cloud");
+        var callback = f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings());
+        Check((await callback(CancellationToken.None, null, false)).Success, "download failed");
+        Check(f.Source.Queue.DeferForLaunch(f.Game.Id) == null, "pending background work unexpectedly started");
+        Check(f.Source.Queue.Start(f.Game.Id) == null && !File.Exists(Path.Combine(f.State, "ready")), "game launch started foreground sync");
+        Check((await f.Source.Queue.Start(f.Game.Id, true)).Success, "post-game background resume failed");
+    }
+
+    private static async Task BackgroundAdapter()
+    {
+        using var f = new Fixture(); File.WriteAllText(Path.Combine(f.Cloud, "mod.txt"), "cloud");
+        Check((await f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings())(CancellationToken.None, null, false)).Success, "download failed");
+        f.Source.BeginBackground();
+        Check(!f.Game.IsInstalling && f.Game.IsInstalled, "background work changed installation state");
+        await WaitFor(() => !f.Source.Queue.Contains(f.Game.Id) && InstallProgressState.Shared.Get(f.Game.Id)?.Active != true);
+        Check(File.Exists(Path.Combine(f.State, "ready")), "background adapter did not initialize real sync state");
+        Check(f.Source.Api.Notifications.Count == 0 && f.Source.Errors.Count == 0, "completed work left notification or false failure");
+        Check(!f.Source.DeferLaunch(out _), "successful background initialization left a permanent launch deferral");
+    }
+
+    private static async Task BackgroundNotificationFailure()
+    {
+        using var f = new Fixture();
+        Check((await f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings())(CancellationToken.None, null, false)).Success, "download failed");
+        f.Source.Api.Notifications.ThrowAdd = true;
+        f.Source.BeginBackground();
+        await WaitFor(() => !f.Source.Queue.Contains(f.Game.Id) && InstallProgressState.Shared.Get(f.Game.Id)?.Active != true);
+        Check(File.Exists(Path.Combine(f.State, "ready")), "UI notification failure stopped or orphaned background work");
+    }
+
+    private static async Task BackgroundNotificationCancellation()
+    {
+        using var f = new Fixture();
+        Check((await f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings())(CancellationToken.None, null, false)).Success, "download failed");
+        f.Source.DelayLiveManifest = true;
+        f.Source.BeginBackground();
+        await WaitFor(() => f.Source.DelayedManifestEntered.IsSet && f.Source.Api.Notifications.Count == 1);
+        f.Source.Api.Notifications.Last.Action();
+        await WaitFor(() => !f.Source.Queue.Contains(f.Game.Id) && InstallProgressState.Shared.Get(f.Game.Id)?.Active != true);
+        Check(InstallProgressState.Shared.Get(f.Game.Id)?.Phase == "Cancelled" && !f.Game.IsInstalling, "cancel did not reach background work or left busy state");
+    }
+
+    private static async Task BackgroundLaunchBarrier()
+    {
+        using var f = new Fixture();
+        Check((await f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings())(CancellationToken.None, null, false)).Success, "download failed");
+        f.Source.DelayLiveManifest = true; f.Source.BeginBackground();
+        await WaitFor(() => f.Source.DelayedManifestEntered.IsSet);
+        Check(f.Source.DeferLaunch(out var stopped) && stopped, "launch cancellation did not drain background worker");
+        Check(f.Source.Queue.Contains(f.Game.Id) && f.Source.Queue.Start(f.Game.Id) == null, "launch lost deferral or restarted foreground initialization");
+        f.Source.DelayLiveManifest = false;
+        // Resume before the cancelled observer's UI continuation has cleaned up.
+        // The adapter must yield rather than lose this game-exit request to a busy session.
+        f.Source.BeginBackground(true);
+        await WaitFor(() => !f.Source.Queue.Contains(f.Game.Id) && InstallProgressState.Shared.Get(f.Game.Id)?.Active != true);
+        Check(File.Exists(Path.Combine(f.State, "ready")), "post-game resume failed after cancelled metadata lookup");
+    }
+
+    private static async Task FailedBackgroundLaunchBarrier()
+    {
+        using var f = new Fixture();
+        Check((await f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings())(CancellationToken.None, null, false)).Success, "download failed");
+        f.Source.LiveManifestError = new IOException("background lookup failed before pair initialization");
+        f.Source.BeginBackground();
+        await WaitFor(() => !f.Source.Queue.Contains(f.Game.Id) && InstallProgressState.Shared.Get(f.Game.Id)?.Active != true);
+        Check(!File.Exists(Path.Combine(f.State, "pair.txt")), "fixture unexpectedly initialized a pair");
+        Check(f.Source.DeferLaunch(out var stopped) && stopped, "failed background work fell back to foreground initial sync on launch");
+    }
+
+    private static async Task FailedDownloadLaunchBarrier()
+    {
+        using var f = new Fixture();
+        var download = f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings());
+        f.Source.LiveManifestError = new IOException("mod download lookup failed");
+        try { await download(CancellationToken.None, null, false); }
+        catch (IOException) { }
+        Check(!f.Source.Queue.Contains(f.Game.Id) && !File.Exists(Path.Combine(f.State, "pair.txt")), "failed download queued or initialized two-way sync");
+        Check(f.Source.DeferLaunch(out var stopped) && stopped, "failed download retried expensive setup in foreground on launch");
+    }
+
+    private static async Task WaitFor(Func<bool> done)
+    {
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        while (!done()) { if (timer.Elapsed > TimeSpan.FromSeconds(20)) throw new TimeoutException("Background adapter did not settle."); await Task.Delay(10); }
     }
 
     private static void Run(string name, Action test)
@@ -240,6 +325,7 @@ internal static class Program
         public string Json(PersonalCloudLibraryItem item) => "live";
         public void Dispose()
         {
+            Source.Queue.CancelAll();
             Environment.SetEnvironmentVariable("RCLONE_CONFIG", oldConfig);
             try { Directory.Delete(Root, true); } catch { }
         }
@@ -263,6 +349,9 @@ namespace PersonalCloudLibrarySource
         public string RcloneContentRoot { get; set; }
         public string RcloneExecutablePath { get; set; }
         public int ModSyncTimeoutSeconds { get; set; }
+        public string RcloneManifestPath { get; set; }
+        public int RcloneTimeoutSeconds { get; set; } = 30;
+        public int RcloneTransferInactivityTimeoutSeconds { get; set; } = 60;
     }
     public sealed class PersonalCloudLibrarySourceSettingsViewModel { public PersonalCloudLibrarySourceSettings Settings { get; set; } }
     public sealed class PersonalCloudLibraryManifest { public List<PersonalCloudLibraryItem> Items { get; set; } = new List<PersonalCloudLibraryItem>(); }
@@ -273,6 +362,19 @@ namespace PersonalCloudLibrarySource
         private PersonalCloudLibrarySourceSettingsViewModel settings;
         private readonly SemaphoreSlim modSyncGate = new SemaphoreSlim(1, 1);
         private readonly ModSyncService modSyncService = new ModSyncService();
+        private readonly RcloneFileCopier rcloneFileCopier = new RcloneFileCopier();
+        public PostInstallModSyncQueue Queue => postInstallModSync;
+        public void BeginBackground(bool resume = false) => StartInstallBackgroundModSync(Harness.Game, resume);
+        public bool DeferLaunch(out bool stopped) => DeferInstallBackgroundModsForLaunch(Harness.Game, out stopped);
+        private readonly TestApi playniteApi = new TestApi();
+        public TestApi Api => playniteApi;
+        private static readonly TestLogger logger = new TestLogger();
+        public readonly List<ModSyncResult> Errors = new List<ModSyncResult>();
+        private void NotifyModSync(Game game, ModSyncResult result) => Errors.Add(result);
+        private ModSyncResult RunModSync(Game game, bool stopped, bool manual, bool relink) => new ModSyncResult { Success = true };
+        public bool DelayLiveManifest;
+        public readonly ManualResetEventSlim DelayedManifestEntered = new ManualResetEventSlim();
+        public ModSyncResult SyncExisting() => modSyncService.Synchronize(BuildModSyncRequest(Harness.Item(), Harness.Manifest(), SettingsView.Settings), _ => false);
         public SemaphoreSlim Gate => modSyncGate;
         public readonly PersonalCloudLibrarySourceSettingsViewModel SettingsView = new PersonalCloudLibrarySourceSettingsViewModel();
         public int ConfirmCalls;
@@ -290,7 +392,7 @@ namespace PersonalCloudLibrarySource
         private ModSyncRequest BuildModSyncRequest(PersonalCloudLibraryItem item, PersonalCloudLibraryManifest manifest, PersonalCloudLibrarySourceSettings current)
         {
             if (BuildThrows) throw new InvalidOperationException("bad optional map");
-            return new ModSyncRequest { GameId = item.Id, LocalFolder = Path.GetFullPath(item.ModPath), RemoteFolder = ":local:" + Harness.Cloud,
+            return new ModSyncRequest { GameId = item.Id, LocalFolder = Path.GetFullPath(item.ModPath), RemoteFolder = current.RcloneRemoteName + ":" + Harness.Cloud,
                 StateDirectory = Harness.State, LaunchFile = Path.Combine(Harness.Root, "game", item.LaunchFile),
                 RcloneExecutable = current.RcloneExecutablePath, TimeoutSeconds = current.ModSyncTimeoutSeconds };
         }
@@ -299,10 +401,11 @@ namespace PersonalCloudLibrarySource
         private string LoadManifestJson(PersonalCloudLibrarySourceSettings value, CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
+            if (DelayLiveManifest) { DelayedManifestEntered.Set(); token.WaitHandle.WaitOne(); token.ThrowIfCancellationRequested(); }
             if (LiveManifestError != null) throw LiveManifestError;
             return LiveManifest ?? "live";
         }
         private bool ConfirmModSync(string message) { ConfirmCalls++; return ConfirmHandler(message); }
     }
 }
-namespace Playnite.SDK.Models { public class Game { public string GameId { get; set; } public bool IsRunning { get; set; } } }
+namespace Playnite.SDK.Models { public class Game { public Guid Id { get; } = Guid.NewGuid(); public string GameId { get; set; } public string Name = "fixture"; public bool IsRunning { get; set; } public bool IsInstalled = true, IsInstalling; } }

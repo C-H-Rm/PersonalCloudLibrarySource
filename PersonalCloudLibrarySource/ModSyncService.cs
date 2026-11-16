@@ -32,6 +32,7 @@ namespace PersonalCloudLibrarySource
         public long Checks { get; set; }
         public long TotalChecks { get; set; }
         public double BytesPerSecond { get; set; }
+        public double? Percentage { get; set; }
     }
 
     public sealed class ModSyncResult
@@ -302,6 +303,75 @@ namespace PersonalCloudLibrarySource
             if (result.ExitCode != 0)
                 throw new InvalidOperationException("rclone " + arguments[0] + " failed (" + result.ExitCode + "). No deletion sync will follow.\n" + result.Log);
             return result;
+        }
+
+        /// <summary>Downloads cloud mods missing from the installed local folder without initializing or changing a pairing.</summary>
+        public ModSyncResult DownloadAfterInstall(ModSyncRequest request, Func<ModSyncRequest, ModSyncResult> download)
+        {
+            string diagnostic = null;
+            var validated = false;
+            try
+            {
+                Validate(request);
+                if (IsWithin(request.StateDirectory, Path.GetDirectoryName(Path.GetFullPath(request.LaunchFile))))
+                    throw new InvalidOperationException("Install mod state must be outside the game installation.");
+                if (download == null) throw new InvalidOperationException("Install mod download callback is required.");
+                validated = true;
+                request.CancellationToken.ThrowIfCancellationRequested();
+                RejectReparsePoints(request.LocalFolder);
+                RejectReparsePoints(request.StateDirectory);
+                var stateParent = Path.GetDirectoryName(Path.GetFullPath(request.StateDirectory));
+                Directory.CreateDirectory(stateParent);
+                using (new FileStream(request.StateDirectory + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+                {
+                    RejectReparsePoints(request.LocalFolder);
+                    RejectReparsePoints(request.StateDirectory);
+                    var pairFile = Path.Combine(request.StateDirectory, "pair.txt");
+                    var readyFile = Path.Combine(request.StateDirectory, "ready");
+                    var identity = Path.GetFullPath(request.LocalFolder) + "\n" + request.RemoteFolder;
+                    var hasPair = File.Exists(pairFile);
+                    var completedPair = hasPair && File.Exists(readyFile);
+                    if (hasPair && !string.Equals(File.ReadAllText(pairFile), identity, StringComparison.Ordinal))
+                        throw new InvalidOperationException("Mod sync mapping changed. Restore the exact previous paths before downloading mods.");
+                    // Do not alter game data or pairing state until prior identity is accepted.
+                    Directory.CreateDirectory(request.LocalFolder);
+                    Directory.CreateDirectory(request.StateDirectory);
+                    diagnostic = DiagnosticPath(request);
+                    // Incomplete initial state is not reset or promoted; downloading missing files remains safe.
+                    var remote = RunPhase(request, "install-list", "lsf", request.RemoteFolder, "--recursive", "--files-only");
+                    if (remote.ExitCode == 3 && !hasPair)
+                        return new ModSyncResult { Success = true, DiagnosticPath = diagnostic,
+                            Message = "No cloud mods are present yet; install download completed without creating a remote folder." };
+                    if (remote.ExitCode != 0)
+                        throw new InvalidOperationException("Unable to list cloud mod names safely; no install download was started.\n" + remote.Log);
+                    var remoteFiles = remote.Output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                    var localFiles = Directory.GetFiles(request.LocalFolder, "*", SearchOption.AllDirectories)
+                        .Select(path => path.Substring(Path.GetFullPath(request.LocalFolder).TrimEnd(Path.DirectorySeparatorChar).Length + 1)
+                            .Replace(Path.DirectorySeparatorChar, '/'));
+                    var collision = FindWindowsCaseCollision(localFiles.Concat(remoteFiles));
+                    if (collision != null)
+                        throw new InvalidOperationException("Mod names collide on a Windows destination. Rename the conflicting files before installing: " + collision);
+                    if (completedPair && !File.Exists(Path.Combine(request.StateDirectory, "paused")))
+                        File.WriteAllText(Path.Combine(request.StateDirectory, "paused"), "Reinstalled: install-only mod download; resume background sync explicitly.");
+                    request.CancellationToken.ThrowIfCancellationRequested();
+                    var result = download(request);
+                    if (result == null) throw new InvalidOperationException("Install mod download returned no result.");
+                    result.DiagnosticPath = diagnostic;
+                    if (!result.Success && string.IsNullOrWhiteSpace(result.Message))
+                        result.Message = result.Cancelled ? "Install mod download cancelled; retry is safe." : "Install mod download failed; retry is safe.";
+                    return result;
+                }
+            }
+            catch (Exception ex)
+            {
+                var cancelled = ex is OperationCanceledException || (request != null && request.CancellationToken.IsCancellationRequested);
+                var relink = request != null && (File.Exists(Path.Combine(request.StateDirectory ?? "", "paused")) ||
+                    (File.Exists(Path.Combine(request.StateDirectory ?? "", "pair.txt")) && !File.Exists(Path.Combine(request.StateDirectory ?? "", "ready"))));
+                AppendDiagnostic(diagnostic, "install-download", ex.ToString());
+                return new ModSyncResult { Success = false, Cancelled = cancelled, RequiresRelink = relink,
+                    DiagnosticPath = validated ? diagnostic : null,
+                    Message = cancelled ? "Install mod download cancelled; retry is safe. No automatic resync was attempted." : ex.Message };
+            }
         }
 
         /// <summary>
