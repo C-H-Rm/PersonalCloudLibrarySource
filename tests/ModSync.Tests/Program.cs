@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using PersonalCloudLibrarySource;
 
 internal static class Program
@@ -85,8 +86,8 @@ internal static class Program
             Check(!f.Service.Synchronize(f.Request, _ => true).Success && !Directory.Exists(f.RemoteRoot + "-different"), "mapping changed silently");
         });
         Test("initial linkage requires confirmation", f => {
-            f.Local("a", "a");
-            Check(!f.Service.Synchronize(f.Request, _ => false).Success && !File.Exists(f.Remote("a")), "declined initial link wrote data");
+            f.Local("a", "a"); var declined = f.Service.Synchronize(f.Request, _ => false);
+            Check(!declined.Success && declined.Cancelled && !File.Exists(f.Remote("a")), "declined initial link was not distinct or wrote data");
         });
         Test("sync state may not live inside mod folder", f => {
             f.Request.StateDirectory = System.IO.Path.Combine(f.LocalRoot, "state");
@@ -181,6 +182,68 @@ internal static class Program
             f.Local("a", "a");
             File.CreateSymbolicLink(f.Path("link"), f.Request.LaunchFile);
             Check(!f.Service.Synchronize(f.Request, _ => true).Success && !File.Exists(f.Remote("a")), "link followed");
+        });
+        Test("pre-cancelled sync does not start rclone or create pairing", f => {
+            f.Local("a", "a");
+            using (var cts = new CancellationTokenSource()) {
+            cts.Cancel(); f.Request.CancellationToken = cts.Token;
+            var result = f.Service.Synchronize(f.Request, _ => true);
+            Check(result.Cancelled && !result.Success && !File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt")), "pre-cancel was not distinct or changed state");
+            }
+        });
+        Test("cancelled initial check can be explicitly retried without stale lock", f => {
+            f.Local("kept", "local");
+            using (var cts = new CancellationTokenSource()) {
+                f.Request.CancellationToken = cts.Token;
+                f.Request.Progress = p => { if (p.Phase == "check") cts.Cancel(); };
+                var cancelled = f.Service.Synchronize(f.Request, _ => true);
+                Check(cancelled.Cancelled && !cancelled.Success && !File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "paused")), "operation cancellation was not distinct");
+            }
+            f.Request.CancellationToken = CancellationToken.None; f.Request.Progress = null;
+            var retried = f.Service.Synchronize(f.Request, _ => true);
+            Check(retried.Success && File.Exists(f.Remote("kept")), "explicit retry failed after cancellation");
+        });
+        Test("runner cancellation kills and drains a labelled shell fixture", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            var fixture = System.IO.Path.Combine(f.Root, "slow-rclone-fixture.sh");
+            File.WriteAllText(fixture, "#!/bin/sh\n echo '{\"stats\":{\"bytes\":7,\"totalBytes\":10,\"checks\":1,\"totalChecks\":2,\"speed\":3}}' >&2\n sleep 30\n");
+            File.SetUnixFileMode(fixture, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            using (var cts = new CancellationTokenSource()) {
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                ModSyncProgress observed = null;
+                var task = System.Threading.Tasks.Task.Run(() => new ModSyncProcess().Run(fixture, 60, cts.Token, p => observed = p, "fixture"));
+                Thread.Sleep(300); cts.Cancel();
+                var result = task.GetAwaiter().GetResult();
+                Check(result.Cancelled && watch.Elapsed < TimeSpan.FromSeconds(5), "runner did not cancel promptly");
+                Check(observed != null && observed.Phase == "fixture" && observed.Bytes == 7 && observed.TotalBytes == 10 && observed.Checks == 1 && observed.TotalChecks == 2 && observed.BytesPerSecond == 3, "root stats were not parsed accurately");
+            }
+        });
+        Test("runner kills process when progress callback throws", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            var fixture = System.IO.Path.Combine(f.Root, "callback-rclone-fixture.sh");
+            File.WriteAllText(fixture, "#!/bin/sh\n echo '{\"stats\":{\"bytes\":7}}' >&2\n sleep 30\n");
+            File.SetUnixFileMode(fixture, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var threw = false;
+            try { new ModSyncProcess().Run(fixture, 60, CancellationToken.None, _ => throw new Exception("fixture callback")); }
+            catch (Exception ex) { threw = ex.Message.Contains("callback"); }
+            Check(threw, "runner swallowed callback failure");
+        });
+        Test("sync reports actual named phases and bounded progress", f => {
+            f.Local("a", "a"); var phases = new System.Collections.Generic.List<string>();
+            f.Request.Progress = p => { phases.Add(p.Phase); Check(p.Bytes >= 0 && p.TotalBytes >= 0 && p.Checks >= 0 && p.TotalChecks >= 0, "negative stats"); };
+            var result = f.Service.Synchronize(f.Request, _ => true);
+            Check(result.Success && !string.IsNullOrEmpty(result.DiagnosticPath) && File.Exists(result.DiagnosticPath), "diagnostic path missing");
+            Check(phases.Contains("bisync") && phases.Contains("check"), "actual command phase progress missing");
+        });
+        Test("paused and incomplete pairing results expose explicit recovery", f => {
+            Directory.CreateDirectory(f.Request.StateDirectory);
+            File.WriteAllText(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt"), f.Request.LocalFolder + "\\n" + f.Request.RemoteFolder);
+            f.Local("a", "a");
+            var incomplete = f.Service.Synchronize(f.Request, _ => true);
+            Check(incomplete.RequiresRelink, "incomplete initial pairing did not offer relink");
+            f.Service.Pause(f.Request.StateDirectory);
+            var paused = f.Service.Synchronize(f.Request, _ => true);
+            Check(paused.RequiresRelink, "paused result did not offer relink");
         });
         Console.WriteLine($"RESULT: {passed} passed, {failed} failed");
         Environment.ExitCode = failed == 0 ? 0 : 1;

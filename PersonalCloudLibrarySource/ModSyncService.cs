@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 
 namespace PersonalCloudLibrarySource
 {
@@ -16,6 +17,18 @@ namespace PersonalCloudLibrarySource
         public string StateDirectory { get; set; }
         public string RcloneExecutable { get; set; } = "rclone";
         public int TimeoutSeconds { get; set; } = 1800;
+        public CancellationToken CancellationToken { get; set; }
+        public Action<ModSyncProgress> Progress { get; set; }
+    }
+
+    public sealed class ModSyncProgress
+    {
+        public string Phase { get; set; }
+        public long Bytes { get; set; }
+        public long TotalBytes { get; set; }
+        public long Checks { get; set; }
+        public long TotalChecks { get; set; }
+        public double BytesPerSecond { get; set; }
     }
 
     public sealed class ModSyncResult
@@ -23,6 +36,9 @@ namespace PersonalCloudLibrarySource
         public bool Success { get; set; }
         public bool HasConflicts { get; set; }
         public string Message { get; set; }
+        public bool Cancelled { get; set; }
+        public bool RequiresRelink { get; set; }
+        public string DiagnosticPath { get; set; }
     }
 
     public sealed class ModSyncService
@@ -34,8 +50,9 @@ namespace PersonalCloudLibrarySource
             try
             {
                 Validate(request);
+                var diagnostic = DiagnosticPath(request);
+                request.CancellationToken.ThrowIfCancellationRequested();
                 Directory.CreateDirectory(request.StateDirectory);
-                // Outside the game/cache; serializes even separate plugin instances.
                 using (new FileStream(request.StateDirectory + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
                 {
                     return SynchronizeLocked(request, confirm ?? (_ => false));
@@ -43,7 +60,13 @@ namespace PersonalCloudLibrarySource
             }
             catch (Exception ex)
             {
-                return new ModSyncResult { Success = false, Message = ex.Message };
+                var cancelled = ex is OperationCanceledException || (request != null && request.CancellationToken.IsCancellationRequested);
+                var relink = request != null && (File.Exists(Path.Combine(request.StateDirectory ?? "", "paused")) ||
+                    (File.Exists(Path.Combine(request.StateDirectory ?? "", "pair.txt")) && !File.Exists(Path.Combine(request.StateDirectory ?? "", "ready"))));
+                var diagnostic = request == null ? null : DiagnosticPath(request);
+                if (!string.IsNullOrEmpty(diagnostic)) AppendDiagnostic(diagnostic, "operation", ex.ToString());
+                return new ModSyncResult { Success = false, Cancelled = cancelled, RequiresRelink = relink, DiagnosticPath = diagnostic,
+                    Message = cancelled ? "Mod sync cancelled. No automatic resync was attempted." : ex.Message };
             }
         }
 
@@ -80,11 +103,12 @@ namespace PersonalCloudLibrarySource
             if (!initialized)
             {
                 if (!confirm("Link this mod folder for two-way sync, including deletions?\n\nLocal: " + r.LocalFolder + "\nCloud: " + r.RemoteFolder + "\n\nExisting files will be merged. Conflicting initial files must be resolved first."))
-                    return Declined();
+                    return Declined(r);
                 Require(r, "mkdir", r.RemoteFolder);
                 // --download compares actual content, not just equal-sized binaries.
                 var checkPath = Path.Combine(r.StateDirectory, "initial-check.txt");
-                var check = Run(r, "check", r.LocalFolder, r.RemoteFolder, "--download", "--combined", checkPath);
+                var check = Run(r, "check", r.LocalFolder, r.RemoteFolder, "--download", "--combined", checkPath,
+                    "--use-json-log", "--stats=1s", "--stats-log-level", "NOTICE");
                 var report = File.Exists(checkPath) ? File.ReadAllLines(checkPath) : new string[0];
                 if (report.Any(line => line.StartsWith("* ") || line.StartsWith("! ")) ||
                     (check.ExitCode != 0 && !report.Any(line => line.StartsWith("+ ") || line.StartsWith("- "))))
@@ -110,7 +134,7 @@ namespace PersonalCloudLibrarySource
             if (initialized && ((localCount == 0 && remoteCount > 0) || (remoteCount == 0 && localCount > 0)))
             {
                 if (!confirm("One tracked mod folder is now empty. Synchronization may remove all remaining mods on the other side. Continue?\n\nLocal: " + r.LocalFolder + "\nCloud: " + r.RemoteFolder))
-                    return Declined();
+                    return Declined(r);
             }
 
             var arguments = new List<string>
@@ -119,7 +143,8 @@ namespace PersonalCloudLibrarySource
                 "--workdir", workDirectory, "--check-access", "--check-filename", markerName,
                 "--compare", "size,modtime,checksum", "--download-hash",
                 "--conflict-resolve", "none", "--conflict-loser", "num", "--conflict-suffix", "pcls-conflict",
-                "--max-delete", "100", "--resilient", "--recover", "--verbose"
+                "--max-delete", "100", "--resilient", "--recover", "--verbose",
+                "--use-json-log", "--stats=1s", "--stats-log-level", "NOTICE"
             };
             if (!initialized) arguments.Add("--resync");
             var sync = Run(r, arguments.ToArray());
@@ -132,13 +157,37 @@ namespace PersonalCloudLibrarySource
             return new ModSyncResult
             {
                 Success = true, HasConflicts = conflicts,
+                DiagnosticPath = DiagnosticPath(r),
                 Message = conflicts ? "Mods synchronized; conflicting versions were kept with pcls-conflict suffixes. Review them before playing." : "Mods synchronized."
             };
         }
 
         private ModSyncCommandResult Run(ModSyncRequest r, params string[] arguments)
         {
-            return process.Run(r.RcloneExecutable, r.TimeoutSeconds, arguments);
+            var phase = arguments.Length == 0 ? "command" : arguments[0];
+            try
+            {
+                var result = process.RunCore(r.RcloneExecutable, r.TimeoutSeconds, r.CancellationToken, r.Progress, phase, arguments);
+                AppendDiagnostic(DiagnosticPath(r), phase, result.Log + (result.Cancelled ? "\nCANCELLED" : ""));
+                if (result.Cancelled) throw new OperationCanceledException(r.CancellationToken);
+                return result;
+            }
+            catch (ModSyncTimeoutException ex) { AppendDiagnostic(DiagnosticPath(r), phase, ex.Log + "\nTIMEOUT " + ex.Message); throw; }
+            catch (ModSyncCallbackException ex) { AppendDiagnostic(DiagnosticPath(r), phase, ex.Log + "\nCALLBACK ERROR " + ex.InnerException); throw; }
+        }
+
+        private static string DiagnosticPath(ModSyncRequest r) => r == null || string.IsNullOrWhiteSpace(r.StateDirectory)
+            ? null : Path.Combine(r.StateDirectory, "diagnostics.log");
+
+        private static void AppendDiagnostic(string path, string phase, string text)
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                File.AppendAllText(path, "\n=== " + DateTime.UtcNow.ToString("O") + " phase=" + phase + " ===\n" + (text ?? "") + "\n");
+            }
+            catch { /* Diagnostics must not mask the original sync outcome. */ }
         }
 
         private ModSyncCommandResult Require(ModSyncRequest r, params string[] arguments)
@@ -161,8 +210,9 @@ namespace PersonalCloudLibrarySource
             try
             {
                 Validate(request);
+                request.CancellationToken.ThrowIfCancellationRequested();
                 if (confirm == null || !confirm("Explicitly relink mods after reinstall/recovery? Previous sync state will be archived. Cloud files will be merged into the local folder, not deleted because the game was removed.\n\nLocal: " + request.LocalFolder + "\nCloud: " + request.RemoteFolder))
-                    return Declined();
+                    return Declined(request);
                 Directory.CreateDirectory(Path.GetDirectoryName(request.StateDirectory));
                 using (new FileStream(request.StateDirectory + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
                 {
@@ -174,7 +224,14 @@ namespace PersonalCloudLibrarySource
                     return SynchronizeLocked(request, _ => true);
                 }
             }
-            catch (Exception ex) { return new ModSyncResult { Success = false, Message = ex.Message }; }
+            catch (Exception ex)
+            {
+                var cancelled = ex is OperationCanceledException || (request != null && request.CancellationToken.IsCancellationRequested);
+                var diagnostic = DiagnosticPath(request);
+                AppendDiagnostic(diagnostic, "relink", ex.ToString());
+                return new ModSyncResult { Success = false, Cancelled = cancelled, RequiresRelink = true, DiagnosticPath = diagnostic,
+                    Message = cancelled ? "Relink cancelled. No automatic resync was attempted." : ex.Message };
+            }
         }
 
         public static ModSyncRequest RequireCurrentMapping(ModSyncRequest imported, Func<ModSyncRequest> loadCurrent)
@@ -190,7 +247,8 @@ namespace PersonalCloudLibrarySource
             return current;
         }
 
-        private static ModSyncResult Declined() => new ModSyncResult { Success = false, Message = "Mod sync cancelled; game launch requires an explicit decision." };
+        private static ModSyncResult Declined(ModSyncRequest request) => new ModSyncResult { Success = false, Cancelled = true,
+            DiagnosticPath = DiagnosticPath(request), Message = "Mod sync declined; game launch requires an explicit decision." };
 
         private static void Validate(ModSyncRequest r)
         {
