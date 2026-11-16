@@ -9,6 +9,8 @@ on:
       - tests/CacheControllers.Tests/**
       - tests/CacheSafety.Tests/**
       - tests/RcloneTransfers.Tests/**
+      - tests/ModSync.Tests/**
+      - tests/ModSyncUx.Tests/**
       - tools/package-extension.ps1
       - tools/verify-package.ps1
       - tools/test-package-extension.ps1
@@ -24,6 +26,8 @@ on:
       - tests/CacheControllers.Tests/**
       - tests/CacheSafety.Tests/**
       - tests/RcloneTransfers.Tests/**
+      - tests/ModSync.Tests/**
+      - tests/ModSyncUx.Tests/**
       - tools/package-extension.ps1
       - tools/verify-package.ps1
       - tools/test-package-extension.ps1
@@ -89,6 +93,12 @@ jobs:
 
       - name: Test rclone transfer timeouts and local copies
         run: dotnet run --project tests/RcloneTransfers.Tests/RcloneTransfers.Tests.csproj --configuration Release
+
+      - name: Test mod sync safety, cancellation and recovery
+        run: dotnet run --project tests/ModSync.Tests/ModSync.Tests.csproj --configuration Release
+
+      - name: Test mod sync interaction and progress presentation
+        run: dotnet run --project tests/ModSyncUx.Tests/ModSyncUx.Tests.csproj --configuration Release
 
       - name: Build, package and inspect Playnite plugin
         id: package

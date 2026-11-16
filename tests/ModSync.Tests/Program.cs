@@ -183,6 +183,35 @@ internal static class Program
             File.CreateSymbolicLink(f.Path("link"), f.Request.LaunchFile);
             Check(!f.Service.Synchronize(f.Request, _ => true).Success && !File.Exists(f.Remote("a")), "link followed");
         });
+        Test("invalid mod-state location does not create diagnostic files", f => {
+            f.Request.StateDirectory = System.IO.Path.Combine(f.LocalRoot, "rejected-state");
+            var result = f.Service.Synchronize(f.Request, _ => true);
+            Check(!result.Success && !Directory.Exists(f.Request.StateDirectory), "invalid configuration wrote diagnostics inside mods");
+        });
+        Test("diagnostics rotate without touching pairing state and record phase duration", f => {
+            f.Local("a", "a"); Directory.CreateDirectory(f.Request.StateDirectory);
+            var path = System.IO.Path.Combine(f.Request.StateDirectory, "diagnostics.log");
+            File.WriteAllText(path, new string('x', 5 * 1024 * 1024));
+            f.Sync();
+            Check(File.Exists(path + ".previous") && new FileInfo(path).Length < 1024 * 1024,
+                "diagnostics were not bounded");
+            Check(File.ReadAllText(path).Contains("elapsed_ms=") && File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")),
+                "phase duration or ready state missing");
+        });
+        Test("real throttled rclone can be cancelled during transfer", f => {
+            var source = System.IO.Path.Combine(f.Root, "cancel-source.bin");
+            var destination = System.IO.Path.Combine(f.Root, "cancel-destination.bin");
+            File.WriteAllBytes(source, new byte[1024 * 1024]);
+            using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(4))) {
+                var transferred = false;
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                var result = new ModSyncProcess().Run(f.Request.RcloneExecutable, 30, cts.Token,
+                    progress => { if (progress.Bytes > 0) { transferred = true; cts.Cancel(); } },
+                    "copyto", source, destination, "--bwlimit", "64k", "--use-json-log", "--stats", "100ms", "--stats-log-level", "NOTICE");
+                Check(transferred && result.Cancelled && watch.Elapsed < TimeSpan.FromSeconds(5),
+                    "real rclone was not cancelled promptly after reporting transfer progress");
+            }
+        });
         Test("pre-cancelled sync does not start rclone or create pairing", f => {
             f.Local("a", "a");
             using (var cts = new CancellationTokenSource()) {
@@ -224,7 +253,7 @@ internal static class Program
             File.WriteAllText(fixture, "#!/bin/sh\n echo '{\"stats\":{\"bytes\":7}}' >&2\n sleep 30\n");
             File.SetUnixFileMode(fixture, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             var threw = false;
-            try { new ModSyncProcess().Run(fixture, 60, CancellationToken.None, _ => throw new Exception("fixture callback")); }
+            try { new ModSyncProcess().Run(fixture, 60, CancellationToken.None, p => { if (p.Bytes > 0) throw new Exception("fixture callback"); }); }
             catch (Exception ex) { threw = ex.Message.Contains("callback"); }
             Check(threw, "runner swallowed callback failure");
         });
@@ -237,7 +266,7 @@ internal static class Program
         });
         Test("paused and incomplete pairing results expose explicit recovery", f => {
             Directory.CreateDirectory(f.Request.StateDirectory);
-            File.WriteAllText(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt"), f.Request.LocalFolder + "\\n" + f.Request.RemoteFolder);
+            File.WriteAllText(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt"), f.Request.LocalFolder + "\n" + f.Request.RemoteFolder);
             f.Local("a", "a");
             var incomplete = f.Service.Synchronize(f.Request, _ => true);
             Check(incomplete.RequiresRelink, "incomplete initial pairing did not offer relink");

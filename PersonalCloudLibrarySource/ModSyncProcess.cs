@@ -36,7 +36,20 @@ namespace PersonalCloudLibrarySource
                     Arguments = string.Join(" ", arguments.Select(Quote)),
                     UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true
                 };
-                Action kill = () => { try { if (!process.HasExited) process.Kill(true); } catch (InvalidOperationException) { } catch (System.ComponentModel.Win32Exception) { } };
+                Action kill = () =>
+                {
+                    try
+                    {
+                        if (process.HasExited) return;
+#if NET8_0_OR_GREATER
+                        process.Kill(true); // Also terminate descendants in the subprocess test harness.
+#else
+                        process.Kill(); // .NET Framework 4.8: rclone is launched directly, without a shell.
+#endif
+                    }
+                    catch (InvalidOperationException) { }
+                    catch (System.ComponentModel.Win32Exception) { }
+                };
                 process.OutputDataReceived += (sender, args) =>
                 {
                     if (args.Data == null) return;
@@ -59,6 +72,8 @@ namespace PersonalCloudLibrarySource
                     try { progress(new ModSyncProgress { Phase = phase, Bytes = stats.Bytes, TotalBytes = stats.TotalBytes, Checks = stats.Checks, TotalChecks = stats.TotalChecks, BytesPerSecond = stats.BytesPerSecond }); }
                     catch (Exception ex) { lock (gate) callbackError = ex; kill(); }
                 };
+                progress?.Invoke(new ModSyncProgress { Phase = phase });
+                cancellationToken.ThrowIfCancellationRequested();
                 process.Start();
                 process.BeginOutputReadLine(); process.BeginErrorReadLine();
                 var timeout = Stopwatch.StartNew();

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
+using System.Diagnostics;
 
 namespace PersonalCloudLibrarySource
 {
@@ -47,12 +48,13 @@ namespace PersonalCloudLibrarySource
 
         public ModSyncResult Synchronize(ModSyncRequest request, Func<string, bool> confirm)
         {
+            string diagnostic = null;
             try
             {
                 Validate(request);
-                var diagnostic = DiagnosticPath(request);
                 request.CancellationToken.ThrowIfCancellationRequested();
                 Directory.CreateDirectory(request.StateDirectory);
+                diagnostic = DiagnosticPath(request);
                 using (new FileStream(request.StateDirectory + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
                 {
                     return SynchronizeLocked(request, confirm ?? (_ => false));
@@ -63,7 +65,6 @@ namespace PersonalCloudLibrarySource
                 var cancelled = ex is OperationCanceledException || (request != null && request.CancellationToken.IsCancellationRequested);
                 var relink = request != null && (File.Exists(Path.Combine(request.StateDirectory ?? "", "paused")) ||
                     (File.Exists(Path.Combine(request.StateDirectory ?? "", "pair.txt")) && !File.Exists(Path.Combine(request.StateDirectory ?? "", "ready"))));
-                var diagnostic = request == null ? null : DiagnosticPath(request);
                 if (!string.IsNullOrEmpty(diagnostic)) AppendDiagnostic(diagnostic, "operation", ex.ToString());
                 return new ModSyncResult { Success = false, Cancelled = cancelled, RequiresRelink = relink, DiagnosticPath = diagnostic,
                     Message = cancelled ? "Mod sync cancelled. No automatic resync was attempted." : ex.Message };
@@ -73,7 +74,7 @@ namespace PersonalCloudLibrarySource
         private ModSyncResult SynchronizeLocked(ModSyncRequest r, Func<string, bool> confirm)
         {
             if (File.Exists(Path.Combine(r.StateDirectory, "paused")))
-                throw new InvalidOperationException("Mod sync is paused after uninstall. Use 'Relink mods after reinstall' to restore and explicitly establish a new baseline.");
+                throw new InvalidOperationException("Mod sync is paused after uninstall. Use Sync mods to review recovery, or Recover or relink mods, to explicitly establish a new baseline.");
             var pairFile = Path.Combine(r.StateDirectory, "pair.txt");
             var readyFile = Path.Combine(r.StateDirectory, "ready");
             var markerName = ".pcls-modsync-" + Key(r.GameId).Substring(0, 16);
@@ -165,15 +166,17 @@ namespace PersonalCloudLibrarySource
         private ModSyncCommandResult Run(ModSyncRequest r, params string[] arguments)
         {
             var phase = arguments.Length == 0 ? "command" : arguments[0];
+            if (phase == "bisync" && arguments.Contains("--help")) phase = "compatibility";
+            var timer = Stopwatch.StartNew();
             try
             {
                 var result = process.RunCore(r.RcloneExecutable, r.TimeoutSeconds, r.CancellationToken, r.Progress, phase, arguments);
-                AppendDiagnostic(DiagnosticPath(r), phase, result.Log + (result.Cancelled ? "\nCANCELLED" : ""));
+                AppendDiagnostic(DiagnosticPath(r), phase, "elapsed_ms=" + timer.ElapsedMilliseconds + "\n" + result.Log + (result.Cancelled ? "\nCANCELLED" : ""));
                 if (result.Cancelled) throw new OperationCanceledException(r.CancellationToken);
                 return result;
             }
-            catch (ModSyncTimeoutException ex) { AppendDiagnostic(DiagnosticPath(r), phase, ex.Log + "\nTIMEOUT " + ex.Message); throw; }
-            catch (ModSyncCallbackException ex) { AppendDiagnostic(DiagnosticPath(r), phase, ex.Log + "\nCALLBACK ERROR " + ex.InnerException); throw; }
+            catch (ModSyncTimeoutException ex) { AppendDiagnostic(DiagnosticPath(r), phase, "elapsed_ms=" + timer.ElapsedMilliseconds + "\n" + ex.Log + "\nTIMEOUT " + ex.Message); throw; }
+            catch (ModSyncCallbackException ex) { AppendDiagnostic(DiagnosticPath(r), phase, "elapsed_ms=" + timer.ElapsedMilliseconds + "\n" + ex.Log + "\nCALLBACK ERROR " + ex.InnerException); throw; }
         }
 
         private static string DiagnosticPath(ModSyncRequest r) => r == null || string.IsNullOrWhiteSpace(r.StateDirectory)
@@ -185,6 +188,14 @@ namespace PersonalCloudLibrarySource
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
+                // Retain a bounded current log and one previous log, never pairing/baseline state.
+                if (File.Exists(path) && new FileInfo(path).Length > 4 * 1024 * 1024)
+                {
+                    File.Copy(path, path + ".previous", true);
+                    File.WriteAllText(path, "Previous diagnostics retained in diagnostics.log.previous\n");
+                }
+                text = text ?? "";
+                if (text.Length > 262144) text = "[earlier command output omitted]\n" + text.Substring(text.Length - 262144);
                 File.AppendAllText(path, "\n=== " + DateTime.UtcNow.ToString("O") + " phase=" + phase + " ===\n" + (text ?? "") + "\n");
             }
             catch { /* Diagnostics must not mask the original sync outcome. */ }
@@ -207,6 +218,7 @@ namespace PersonalCloudLibrarySource
 
         public ModSyncResult Relink(ModSyncRequest request, Func<string, bool> confirm)
         {
+            string diagnostic = null;
             try
             {
                 Validate(request);
@@ -220,6 +232,7 @@ namespace PersonalCloudLibrarySource
                         Directory.Move(request.StateDirectory, request.StateDirectory + ".archive-" + Guid.NewGuid().ToString("N"));
                     Directory.CreateDirectory(request.LocalFolder);
                     Directory.CreateDirectory(request.StateDirectory);
+                    diagnostic = DiagnosticPath(request);
                     // The relink confirmation already covers this initial merge.
                     return SynchronizeLocked(request, _ => true);
                 }
@@ -227,7 +240,6 @@ namespace PersonalCloudLibrarySource
             catch (Exception ex)
             {
                 var cancelled = ex is OperationCanceledException || (request != null && request.CancellationToken.IsCancellationRequested);
-                var diagnostic = DiagnosticPath(request);
                 AppendDiagnostic(diagnostic, "relink", ex.ToString());
                 return new ModSyncResult { Success = false, Cancelled = cancelled, RequiresRelink = true, DiagnosticPath = diagnostic,
                     Message = cancelled ? "Relink cancelled. No automatic resync was attempted." : ex.Message };

@@ -54,6 +54,7 @@
     <Compile Include="ModSyncService.cs" />
     <Compile Include="ModSyncProcess.cs" />
     <Compile Include="ModSyncIntegration.cs" />
+    <Compile Include="ModSyncUserInteraction.cs" />
     <Compile Include="ModSyncGameMenu.cs" />
     <Compile Include="PersonalCloudLibrarySourceClient.cs" />
     <Compile Include="PersonalCloudLibrarySource.cs" />

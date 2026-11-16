@@ -12,7 +12,7 @@ namespace PersonalCloudLibrarySource
 {
     public partial class PersonalCloudLibrarySource
     {
-        private readonly object modSyncGate = new object();
+        private readonly SemaphoreSlim modSyncGate = new SemaphoreSlim(1, 1);
         private readonly ModSyncService modSyncService = new ModSyncService();
 
         private string ModStateDirectory(string gameId) => Path.Combine(GetPluginUserDataPath(), "mod-sync", ModSyncService.Key(gameId));
@@ -35,6 +35,8 @@ namespace PersonalCloudLibrarySource
         {
             if (args.CancelStartup) return;
             var result = RunModSync(args.Game, false, false, false);
+            // Cancel means cancel this launch, not start silently with unchecked mods.
+            if (result != null && result.Cancelled) { args.CancelStartup = true; return; }
             if (result != null && (!result.Success || result.HasConflicts))
                 args.CancelStartup = !ConfirmModSync("Mods are not verified ready.\n\n" + ShortMessage(result.Message) + "\n\nStart the game anyway?");
         }
@@ -48,7 +50,7 @@ namespace PersonalCloudLibrarySource
         {
             var s = settings.Settings;
             if (game == null || game.PluginId != Id || !s.Enabled || !s.EnableModSync) return null;
-            if (!Monitor.TryEnter(modSyncGate))
+            if (!modSyncGate.Wait(0))
                 return new ModSyncResult { Success = false, Message = "Another mod operation is active. Try again when it completes." };
             ModSyncResult result;
             try
@@ -74,45 +76,66 @@ namespace PersonalCloudLibrarySource
                 var request = BuildModSyncRequest(item, manifest, s);
                 result = OnModUi(() =>
                 {
-                    var approvals = new HashSet<string>(StringComparer.Ordinal);
+                    var interaction = new ModSyncUserInteraction(relink);
                     while (true)
                     {
                         ModSyncResult completed = null;
-                        string pendingConfirmation = null;
+                        var cancelledByUser = false;
+                        interaction.BeginAttempt();
                         playniteApi.Dialogs.ActivateGlobalProgress((GlobalProgressActionArgs progress) =>
                         {
                             try
                             {
+                                progress.CancelToken.ThrowIfCancellationRequested();
+                                progress.Text = "Loading current mod configuration: " + game.Name;
                                 var current = ModSyncService.RequireCurrentMapping(request, () =>
                                 {
-                                    var live = ParseManifest(LoadManifestJson(s));
+                                    var live = ParseManifest(LoadManifestJson(s, progress.CancelToken));
                                     var found = live.Items.Where(i => i != null && string.Equals(i.Id, game.GameId, StringComparison.OrdinalIgnoreCase)).ToList();
                                     if (found.Count != 1 || string.IsNullOrWhiteSpace(found[0].ModPath))
                                         throw new InvalidOperationException("The live mod configuration changed. Update the library before synchronizing.");
                                     return BuildModSyncRequest(found[0], live, s);
                                 });
-                                Func<string, bool> confirm = message =>
+                                current.CancellationToken = progress.CancelToken;
+                                current.Progress = update =>
                                 {
-                                    if (approvals.Contains(message)) return true;
-                                    pendingConfirmation = message;
-                                    return false;
+                                    progress.Text = game.Name + " — " + ModSyncUserInteraction.ProgressText(
+                                        update.Phase, update.Bytes, update.TotalBytes, update.Checks, update.TotalChecks, update.BytesPerSecond);
+                                    progress.IsIndeterminate = update.TotalBytes <= 0;
+                                    if (update.TotalBytes > 0)
+                                    {
+                                        progress.ProgressMaxValue = update.TotalBytes;
+                                        progress.CurrentProgressValue = Math.Min(Math.Max(0, update.Bytes), update.TotalBytes);
+                                    }
                                 };
-                                completed = relink ? modSyncService.Relink(current, confirm) : modSyncService.Synchronize(current, confirm);
+                                completed = interaction.Relink ? modSyncService.Relink(current, interaction.Confirm)
+                                    : modSyncService.Synchronize(current, interaction.Confirm);
                             }
+                            catch (OperationCanceledException) { completed = new ModSyncResult { Cancelled = true, Message = "Mod sync cancelled. You can retry normally." }; }
                             catch (Exception ex) { completed = new ModSyncResult { Success = false, Message = ex.Message }; }
-                        }, new GlobalProgressOptions("Synchronizing mods: " + game.Name) { IsIndeterminate = true, Cancelable = false });
+                            finally { cancelledByUser = progress.CancelToken.IsCancellationRequested; }
+                        }, new GlobalProgressOptions("Synchronizing mods: " + game.Name) { IsIndeterminate = true, Cancelable = true });
                         // Close global progress BEFORE showing a confirmation dialog.
                         // The worker never synchronously dispatches a modal dialog.
-                        if (pendingConfirmation == null || !ConfirmModSync(pendingConfirmation))
-                            return completed ?? new ModSyncResult { Success = false, Message = "Mod sync did not complete." };
-                        approvals.Add(pendingConfirmation);
+                        if (cancelledByUser)
+                        {
+                            completed = completed ?? new ModSyncResult();
+                            completed.Success = false;
+                            completed.Cancelled = true;
+                            completed.Message = "Mod sync cancelled. Completed transfers are kept; use Sync mods to retry.";
+                            return completed;
+                        }
+                        if (interaction.ShouldRetry(completed?.RequiresRelink == true, manual, ConfirmModSync)) continue;
+                        if (interaction.Declined)
+                            return new ModSyncResult { Cancelled = true, Message = "Mod sync cancelled. You can retry normally." };
+                        return completed ?? new ModSyncResult { Success = false, Message = "Mod sync did not complete. Use Sync mods to retry." };
                     }
                 });
             }
             catch (Exception ex) { result = new ModSyncResult { Success = false, Message = ex.Message }; }
-            finally { Monitor.Exit(modSyncGate); }
+            finally { modSyncGate.Release(); }
             logger.Info("Mod sync for " + game.GameId + ": " + result.Message);
-            if (manual || (justStopped && !result.Success) || result.HasConflicts) ShowModMessage(ShortMessage(result.Message));
+            if (manual || (justStopped && !result.Success) || result.HasConflicts) NotifyModSync(game, result);
             return result;
         }
 
@@ -166,9 +189,24 @@ namespace PersonalCloudLibrarySource
 
         private void PauseModSync(string gameId)
         {
-            if (!Monitor.TryEnter(modSyncGate)) throw new InvalidOperationException("Mod sync is active. Wait before uninstalling the cached game.");
+            if (!modSyncGate.Wait(0)) throw new InvalidOperationException("Mod sync is active. Cancel it or wait before uninstalling the cached game.");
             try { modSyncService.Pause(ModStateDirectory(gameId)); }
-            finally { Monitor.Exit(modSyncGate); }
+            finally { modSyncGate.Release(); }
+        }
+
+        private void NotifyModSync(Game game, ModSyncResult result)
+        {
+            OnModUi(() =>
+            {
+                var id = "pcls-mod-sync-" + game.Id;
+                playniteApi.Notifications.Remove(id);
+                var diagnostic = string.IsNullOrWhiteSpace(result.DiagnosticPath) ? "" : "\nDiagnostics: " + result.DiagnosticPath;
+                var retry = result.Success && !result.HasConflicts ? "" : "\nClick this notification to retry Sync mods.";
+                var severity = result.Success && !result.HasConflicts || result.Cancelled ? NotificationType.Info : NotificationType.Error;
+                playniteApi.Notifications.Add(new NotificationMessage(id, game.Name + ": " + ShortMessage(result.Message) + diagnostic + retry,
+                    severity, () => RunModSync(game, false, true, false)));
+                return true;
+            });
         }
 
         private bool ConfirmModSync(string message) => OnModUi(() => playniteApi.Dialogs.ShowMessage(message, "Mod synchronization", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes);

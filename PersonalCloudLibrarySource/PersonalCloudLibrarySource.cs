@@ -260,8 +260,10 @@ namespace PersonalCloudLibrarySource
                 : displayName.Trim();
         }
 
-        private string LoadManifestJson(PersonalCloudLibrarySourceSettings pluginSettings)
+        private string LoadManifestJson(PersonalCloudLibrarySourceSettings pluginSettings,
+            System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var sourceProviderType = GetProviderType(pluginSettings);
 
             if (string.Equals(
@@ -270,7 +272,7 @@ namespace PersonalCloudLibrarySource
                 StringComparison.OrdinalIgnoreCase))
             {
                 logger.Info("Personal Cloud Library Source loading manifest using rclone.");
-                return rcloneManifestReader.ReadManifestJson(pluginSettings);
+                return rcloneManifestReader.ReadManifestJson(pluginSettings, cancellationToken);
             }
 
             if (string.Equals(
