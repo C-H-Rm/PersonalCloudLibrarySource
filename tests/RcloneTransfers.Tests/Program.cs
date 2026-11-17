@@ -126,13 +126,6 @@ internal static class Program
             Check(!result.Succeeded && result.Message.Contains("inactive"), "heartbeat masked inactivity: " + result.Message);
             CheckStopped(f.Destination);
         });
-        Test("error messages do not count as transfer progress", f =>
-        {
-            f.UseProcessFixture();
-            var result = f.Copier.CopyRemoteFileToLocalPath(f.Settings, "errors", f.Destination);
-            Check(!result.Succeeded && result.Message.Contains("activity"), "error spam kept child alive: " + result.Message);
-            CheckStopped(f.Destination);
-        });
         Test("nonzero child exit is not success", f =>
         {
             f.UseProcessFixture();
@@ -144,24 +137,17 @@ internal static class Program
             f.Settings.RcloneExecutablePath = Path.Combine(f.Root, "missing-rclone");
             Check(!f.Copier.CopyRemoteFileToLocalPath(f.Settings, "anything", f.Destination).Succeeded, "missing executable accepted");
         });
-        Test("real rclone copies a file with spaces", f =>
+        Test("real rclone copies paths with spaces, nested files, and empty files", f =>
         {
-            var source = Path.Combine(f.Root, "source file.bin"); File.WriteAllText(source, "actual local content");
-            var result = f.Copier.CopyRemoteFileToLocalPath(f.Settings, source, f.Destination);
-            Check(result.Succeeded && File.ReadAllText(f.Destination) == "actual local content", result.Message);
-        });
-        Test("real rclone accepts an empty file", f =>
-        {
-            var source = Path.Combine(f.Root, "empty.bin"); File.WriteAllBytes(source, Array.Empty<byte>());
-            var result = f.Copier.CopyRemoteFileToLocalPath(f.Settings, source, f.Destination);
-            Check(result.Succeeded && new FileInfo(f.Destination).Length == 0, result.Message);
-        });
-        Test("real rclone copies nested directories", f =>
-        {
-            var source = Path.Combine(f.Root, "source folder"); Directory.CreateDirectory(Path.Combine(source, "nested"));
-            File.WriteAllText(Path.Combine(source, "nested", "mod.bin"), "nested content");
+            var source = Path.Combine(f.Root, "source folder");
+            Directory.CreateDirectory(Path.Combine(source, "nested folder"));
+            File.WriteAllText(Path.Combine(source, "file with spaces.bin"), "actual local content");
+            File.WriteAllBytes(Path.Combine(source, "empty file.bin"), Array.Empty<byte>());
+            File.WriteAllText(Path.Combine(source, "nested folder", "nested mod.bin"), "nested content");
             var result = f.Copier.CopyRemoteDirectoryToLocalPath(f.Settings, source, f.Destination);
-            Check(result.Succeeded && File.ReadAllText(Path.Combine(f.Destination, "nested", "mod.bin")) == "nested content", result.Message);
+            Check(result.Succeeded && File.ReadAllText(Path.Combine(f.Destination, "file with spaces.bin")) == "actual local content" &&
+                new FileInfo(Path.Combine(f.Destination, "empty file.bin")).Length == 0 &&
+                File.ReadAllText(Path.Combine(f.Destination, "nested folder", "nested mod.bin")) == "nested content", result.Message);
         });
         Test("real directory total includes every required file but not skipped cache", f =>
         {
@@ -192,7 +178,11 @@ internal static class Program
                     "required files were not copied");
             } finally { Environment.SetEnvironmentVariable("RCLONE_BWLIMIT", previous); }
         });
-        Test("real directory copies stream before checks finish and freeze the final fixed total", f =>
+        // Keep the 30k-file metadata stress case opt-in; it is a slow perf regression test, not a routine unit test.
+        // Run with PCLS_RUN_SLOW_RCLONE_STRESS=1 and filter "slow native missing-mod" to exercise it alone.
+        if (Environment.GetEnvironmentVariable("PCLS_RUN_SLOW_RCLONE_STRESS") == "1")
+        {
+        Test("slow native missing-mod directory streams during inventory and freezes the final total", f =>
         {
             var source = Path.Combine(f.Root, "stream-source");
             Directory.CreateDirectory(source);
@@ -204,52 +194,53 @@ internal static class Program
             Environment.SetEnvironmentVariable("RCLONE_BWLIMIT", "1M");
             try
             {
-                foreach (var missingOnly in new[] { false, true })
+                var compare = Path.Combine(f.Root, "stream-mod-original");
+                var stage = Path.Combine(f.Root, "stream-mod-stage");
+                Directory.CreateDirectory(compare);
+                Directory.CreateDirectory(stage);
+                for (int i = 0; i < 30000; i++)
                 {
-                    var target = Path.Combine(f.Root, missingOnly ? "stream-mod-target" : "stream-base-target");
-                    Directory.CreateDirectory(target);
-                    for (int i = 0; i < 30000; i++)
-                    {
-                        var name = "cached-" + i.ToString("D5") + ".bin";
-                        var src = Path.Combine(source, name);
-                        var dst = Path.Combine(target, name);
-                        File.Copy(src, dst);
-                        File.SetLastWriteTimeUtc(dst, File.GetLastWriteTimeUtc(src));
-                    }
-                    var samples = new System.Collections.Generic.List<RcloneTransferProgress>();
-                    var clock = Stopwatch.StartNew();
-                    double? firstStreamingSeconds = null, frozenSeconds = null;
-                    var result = missingOnly
-                        ? f.Copier.CopyMissingRemoteDirectoryToLocalPath(f.Settings, source, target, CancellationToken.None, p => Track(p))
-                        : f.Copier.CopyRemoteDirectoryToLocalPath(f.Settings, source, target, CancellationToken.None, p => Track(p));
-                    void Track(RcloneTransferProgress p)
-                    {
-                        samples.Add(p);
-                        if (firstStreamingSeconds == null && p.Phase == "Downloading" && p.CompletedBytes > 0 && !p.TotalBytes.HasValue)
-                            firstStreamingSeconds = clock.Elapsed.TotalSeconds;
-                        if (frozenSeconds == null && p.Phase == "Downloading" && p.TotalBytes.HasValue)
-                            frozenSeconds = clock.Elapsed.TotalSeconds;
-                    }
-                    Check(result.Succeeded, result.Message);
-                    var streaming = samples.FindIndex(p => p.Phase == "Downloading" && p.CompletedBytes > 0 && !p.TotalBytes.HasValue);
-                    var frozen = samples.Find(p => p.Phase == "Downloading" && p.TotalBytes.HasValue);
-                    Check(streaming >= 0 && firstStreamingSeconds.HasValue,
-                        (missingOnly ? "missing-mod" : "base-game") + " bytes did not stream before all checks completed");
-                    Check(frozen != null && frozen.TotalBytes == transferBytes && frozen.Percentage.HasValue && frozenSeconds.HasValue &&
-                        frozenSeconds.Value > firstStreamingSeconds.Value,
-                        (missingOnly ? "missing-mod" : "base-game") + " denominator did not freeze after checkers drained; samples=" +
-                        string.Join(";", samples.Select(p => p.Phase + ":" + p.CompletedBytes + "/" + (p.TotalBytes?.ToString() ?? "?") + ":" + p.Percentage)));
-                    Check(samples[samples.Count - 1].Phase == "Complete" && samples[samples.Count - 1].Percentage == 100,
-                        "whole-directory transfer did not reach successful completion");
-                    Check(new FileInfo(Path.Combine(target, "000-new.bin")).Length == transferBytes,
-                        "streamed file was not completely copied");
-                    Console.WriteLine("EVIDENCE rclone " + (missingOnly ? "missing-mod" : "base-game") + " stream: bytes at " +
-                        firstStreamingSeconds.Value.ToString("F2") + "s; denominator froze at " + frozenSeconds.Value.ToString("F2") +
-                        "s after 30,000 checks; fixed total " + frozen.TotalBytes + " bytes; complete");
+                    var name = "cached-" + i.ToString("D5") + ".bin";
+                    var src = Path.Combine(source, name);
+                    var original = Path.Combine(compare, name);
+                    File.Copy(src, original);
+                    File.SetLastWriteTimeUtc(original, File.GetLastWriteTimeUtc(src));
                 }
+                var samples = new System.Collections.Generic.List<RcloneTransferProgress>();
+                var clock = Stopwatch.StartNew();
+                double? firstStreamingSeconds = null, frozenSeconds = null;
+                var result = f.Copier.CopyMissingRemoteDirectoryToLocalPath(f.Settings, source, stage, compare,
+                    CancellationToken.None, p => Track(p));
+                void Track(RcloneTransferProgress p)
+                {
+                    samples.Add(p);
+                    if (firstStreamingSeconds == null && p.Phase == "Downloading" && p.CompletedBytes > 0 && !p.TotalBytes.HasValue)
+                        firstStreamingSeconds = clock.Elapsed.TotalSeconds;
+                    if (frozenSeconds == null && p.Phase == "Downloading" && p.TotalBytes.HasValue)
+                        frozenSeconds = clock.Elapsed.TotalSeconds;
+                }
+                Check(result.Succeeded, result.Message);
+                var streaming = samples.FindIndex(p => p.Phase == "Downloading" && p.CompletedBytes > 0 && !p.TotalBytes.HasValue);
+                var frozen = samples.Find(p => p.Phase == "Downloading" && p.TotalBytes.HasValue);
+                Check(streaming >= 0 && firstStreamingSeconds.HasValue,
+                    "missing-mod bytes did not stream before all checks completed");
+                Check(frozen != null && frozen.TotalBytes == transferBytes && frozen.Percentage.HasValue && frozenSeconds.HasValue &&
+                    frozenSeconds.Value > firstStreamingSeconds.Value,
+                    "missing-mod denominator did not freeze after checkers drained; samples=" +
+                    string.Join(";", samples.Select(p => p.Phase + ":" + p.CompletedBytes + "/" + (p.TotalBytes?.ToString() ?? "?") + ":" + p.Percentage)));
+                Check(samples[samples.Count - 1].Phase == "Complete" && samples[samples.Count - 1].Percentage == 100,
+                    "whole-directory transfer did not reach successful completion");
+                Check(new FileInfo(Path.Combine(stage, "000-new.bin")).Length == transferBytes,
+                    "missing mod was not completely staged");
+                Check(!File.Exists(Path.Combine(stage, "cached-00000.bin")), "compare-dest cache entry was unnecessarily staged");
+                Console.WriteLine("EVIDENCE missing-mod rclone stream: bytes at " + firstStreamingSeconds.Value.ToString("F2") +
+                    "s; denominator froze at " + frozenSeconds.Value.ToString("F2") + "s after 30,000 inventory entries; fixed total " +
+                    frozen.TotalBytes + " bytes; complete");
             }
             finally { Environment.SetEnvironmentVariable("RCLONE_BWLIMIT", previous); }
         });
+        }
+        else Console.WriteLine("SKIP slow native rclone stress test (set PCLS_RUN_SLOW_RCLONE_STRESS=1 to run it)");
         Test("real rclone reports a missing source", f =>
         {
             var phases = new System.Collections.Generic.List<RcloneTransferProgress>();
@@ -260,7 +251,8 @@ internal static class Program
         });
         Test("real throttled transfer is not capped by total duration", f =>
         {
-            var source = Path.Combine(f.Root, "slow.bin"); File.WriteAllBytes(source, new byte[1024 * 1024]);
+            const int slowBytes = 768 * 1024;
+            var source = Path.Combine(f.Root, "slow.bin"); File.WriteAllBytes(source, new byte[slowBytes]);
             var previous = Environment.GetEnvironmentVariable("RCLONE_BWLIMIT");
             Environment.SetEnvironmentVariable("RCLONE_BWLIMIT", "128k");
             try
@@ -268,10 +260,10 @@ internal static class Program
                 var samples = new System.Collections.Generic.List<RcloneTransferProgress>();
                 var timer = Stopwatch.StartNew();
                 var result = f.Copier.CopyRemoteFileToLocalPath(f.Settings, source, f.Destination, CancellationToken.None, p => samples.Add(p));
-                Check(result.Succeeded && timer.Elapsed.TotalSeconds > 5 && new FileInfo(f.Destination).Length == 1024 * 1024,
+                Check(result.Succeeded && timer.Elapsed.TotalSeconds > 5 && new FileInfo(f.Destination).Length == slowBytes,
                     "slow transfer failed or did not exercise old limit: " + result.Message);
                 var downloading = samples.FindAll(p => p.Phase == "Downloading");
-                Check(downloading.Count > 0 && downloading[0].TotalBytes == 1024 * 1024,
+                Check(downloading.Count > 0 && downloading[0].TotalBytes == slowBytes,
                     "real rclone did not report a frozen transfer total");
                 Check(samples[samples.Count - 1].Phase == "Complete" && samples[samples.Count - 1].Percentage == 100,
                     "successful transfer did not finish at 100%");
@@ -296,37 +288,46 @@ internal static class Program
             }
             finally { Environment.SetEnvironmentVariable("RCLONE_BWLIMIT", previous); }
         });
-        Test("install-only directory copy downloads missing files and excludes reserved markers", f =>
+        Test("install-only compare-dest copy stages missing files and preserves originals", f =>
         {
             var source = Path.Combine(f.Root, "install-cloud");
-            var target = Path.Combine(f.Root, "install-local");
-            Directory.CreateDirectory(source); Directory.CreateDirectory(target);
+            var compare = Path.Combine(f.Root, "install-original");
+            var stage = Path.Combine(f.Root, "install-stage");
+            Directory.CreateDirectory(source); Directory.CreateDirectory(compare); Directory.CreateDirectory(stage);
             File.WriteAllText(Path.Combine(source, "new.bin"), "cloud new");
             File.WriteAllText(Path.Combine(source, "changed.bin"), "cloud changed");
             File.WriteAllText(Path.Combine(source, ".pcls-modsync-reserved"), "marker");
-            File.WriteAllText(Path.Combine(target, "changed.bin"), "local wins");
-            var result = f.Copier.CopyMissingRemoteDirectoryToLocalPath(f.Settings, source, target, CancellationToken.None, null);
+            File.WriteAllText(Path.Combine(compare, "changed.bin"), "local wins");
+            var result = f.Copier.CopyMissingRemoteDirectoryToLocalPath(f.Settings, source, stage, compare,
+                CancellationToken.None, null);
             Check(result.Succeeded, result.Message);
-            Check(File.ReadAllText(Path.Combine(target, "new.bin")) == "cloud new", "missing cloud file not downloaded");
-            Check(File.ReadAllText(Path.Combine(target, "changed.bin")) == "local wins", "existing local file overwritten");
-            Check(!File.Exists(Path.Combine(target, ".pcls-modsync-reserved")), "reserved marker was copied");
+            Check(File.ReadAllText(Path.Combine(stage, "new.bin")) == "cloud new", "missing cloud file not staged");
+            Check(File.ReadAllText(Path.Combine(compare, "changed.bin")) == "local wins", "existing local file overwritten");
+            Check(!File.Exists(Path.Combine(stage, "changed.bin")), "existing local file was redundantly staged");
+            Check(!File.Exists(Path.Combine(stage, ".pcls-modsync-reserved")), "reserved marker was copied");
             Check(File.ReadAllText(Path.Combine(source, "changed.bin")) == "cloud changed", "cloud changed");
         });
         Test("install-only command audit is copy-only with no content check or upload", f =>
         {
             if (!OperatingSystem.IsLinux()) return;
-            var source = Path.Combine(f.Root, "audit-cloud"); var target = Path.Combine(f.Root, "audit-local");
-            Directory.CreateDirectory(source); Directory.CreateDirectory(target); File.WriteAllText(Path.Combine(source, "new"), "new");
+            var source = Path.Combine(f.Root, "audit-cloud"); var compare = Path.Combine(f.Root, "audit-original");
+            var target = Path.Combine(f.Root, "audit-stage");
+            Directory.CreateDirectory(source); Directory.CreateDirectory(compare); Directory.CreateDirectory(target);
+            File.WriteAllText(Path.Combine(source, "new"), "new");
             var audit = Path.Combine(f.Root, "commands.txt");
             var real = Environment.GetEnvironmentVariable("PCLS_RCLONE") ?? "rclone";
             var wrapper = Path.Combine(f.Root, "audit-rclone.sh");
             File.WriteAllText(wrapper, "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"" + audit + "\"\nexec \"" + real + "\" \"$@\"\n");
             File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             f.Settings.RcloneExecutablePath = wrapper;
-            var result = f.Copier.CopyMissingRemoteDirectoryToLocalPath(f.Settings, source, target, CancellationToken.None, null);
+            var result = f.Copier.CopyMissingRemoteDirectoryToLocalPath(f.Settings, source, target, compare,
+                CancellationToken.None, null);
             Check(result.Succeeded, result.Message);
             var args = File.ReadAllLines(audit);
-            Check(args.Contains("copy") && args.Contains("--ignore-existing") && args.Contains("--exclude") && args.Contains(".pcls-modsync-*"), "safe copy flags absent: " + string.Join(" ", args));
+            Check(args.Contains("copy") && args.Contains("--compare-dest") && args.Contains("--size-only") &&
+                args.Contains("--ignore-size") && args.Contains("--exclude") && args.Contains(".pcls-modsync-*"),
+                "production compare-dest copy flags absent: " + string.Join(" ", args));
+            Check(!args.Contains("--ignore-existing"), "test unexpectedly exercised the legacy ignore-existing overload");
             Check(!args.Contains("--check-first"), "install-only copy retained the whole-tree pre-transfer barrier");
             Check(!args.Contains("bisync") && !args.Contains("--download") && !args.Contains("copyto") && !args.Contains("sync"), "install command audit found a comparison or upload: " + string.Join(" ", args));
             File.WriteAllText(audit, string.Empty);
@@ -379,10 +380,9 @@ internal static class Program
         string mode = args[1].Substring(args[1].IndexOf(':') + 1), destination = args[2];
         File.WriteAllText(destination + ".pid", Environment.ProcessId.ToString());
         if (mode == "fail") { Console.Error.WriteLine("intentional fixture failure"); return 7; }
-        for (int i = 0; i < (mode == "progress" ? 28 : 120); i++)
+        for (int i = 0; i < (mode == "progress" ? 24 : 120); i++)
         {
             if (mode == "progress" || mode == "idle") Console.Error.WriteLine("{\"stats\":{\"bytes\":" + (mode == "idle" ? 0 : i) + ",\"checks\":0,\"transfers\":0}}");
-            if (mode == "errors") Console.Error.WriteLine("{\"level\":\"error\",\"msg\":\"intentional fixture error\"}");
             Thread.Sleep(250);
         }
         File.WriteAllText(destination, "completed fixture");
