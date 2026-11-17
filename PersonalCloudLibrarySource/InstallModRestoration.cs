@@ -45,7 +45,7 @@ namespace PersonalCloudLibrarySource
                                 throw new InvalidOperationException("The current cloud mod remote changed.");
                             var copy = rcloneFileCopier.CopyMissingRemoteDirectoryToLocalPath(currentSettings,
                                 request.RemoteFolder.Substring(prefix.Length), request.LocalFolder,
-                                request.DownloadCompareDirectory, token,
+                                request.DownloadCompareDirectory, request.CancellationToken,
                                 update => progress?.Invoke(new ModSyncProgress { Phase = "Downloading cloud mods",
                                     Bytes = update.CompletedBytes, TotalBytes = update.TotalBytes ?? 0,
                                     BytesPerSecond = update.BytesPerSecond, Percentage = update.Percentage }));

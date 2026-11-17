@@ -2,6 +2,7 @@ using PersonalCloudLibrarySource;
 using Playnite.SDK.Models;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -24,6 +25,7 @@ internal static class Program
         Run("callback observes replacement settings instance", SettingsReplacementObserved);
         await RunAsync("gate wait cancellation neither over-releases nor leaks the operation gate", GateCancellation);
         await RunAsync("installation only downloads missing cloud mods, never compares or uploads", DownloadOnly);
+        await RunAsync("inventory failure cancels the actual adapter's staged rclone transfer", InventoryFailureCancelsCopy);
         await RunAsync("two-way initialization starts only when background queue is explicitly started", DownloadThenBackground);
         await RunAsync("launch defers pending background work until explicit post-game resume", LaunchDefersBackground);
         await RunAsync("actual background adapter observes native work and clears status without setting installing", BackgroundAdapter);
@@ -139,6 +141,34 @@ internal static class Program
         Check(!File.Exists(Path.Combine(f.Cloud, "local-only.txt")) && File.ReadAllText(Path.Combine(f.Cloud, "existing.txt")) == "cloud", "download wrote cloud data");
         Check(!File.Exists(Path.Combine(f.State, "ready")) && !File.Exists(Path.Combine(f.State, "pair.txt")), "download initialized bidirectional state");
         Check(!phases.Contains("check") && !phases.Contains("bisync") && f.Source.ConfirmCalls == 0, "download compared contents or asked sync consent");
+    }
+
+    private static async Task InventoryFailureCancelsCopy()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var f = new Fixture();
+        using (var payload = File.Create(Path.Combine(f.Cloud, "slow.bin"))) payload.SetLength(4 * 1024 * 1024);
+        var settings = f.Settings();
+        var real = settings.RcloneExecutablePath;
+        var started = Path.Combine(f.Root, "copy-started");
+        var wrapper = Path.Combine(f.Root, "fail-inventory-rclone.sh");
+        File.WriteAllText(wrapper, "#!/bin/bash\nif [ \"$1\" = lsjson ]; then\n" +
+            "  for ((i=0; i<500; i++)); do [ -f \"" + started + "\" ] && break; sleep 0.01; done\n" +
+            "  sleep 0.3\n  echo 'fixture inventory failure' >&2\n  exit 2\nfi\n" +
+            "if [ \"$1\" = copy ]; then touch \"" + started + "\"; exec \"" + real + "\" \"$@\" --bwlimit=64k; fi\n" +
+            "exec \"" + real + "\" \"$@\"\n");
+        File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        settings.RcloneExecutablePath = wrapper;
+        var callback = f.Source.Create(f.Game, f.Item(), f.Manifest(), settings);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        var timer = Stopwatch.StartNew();
+        var result = await callback(deadline.Token, null, false);
+        Check(File.Exists(started), "fixture did not start the actual native copy");
+        Check(timer.Elapsed < TimeSpan.FromSeconds(4) && !deadline.IsCancellationRequested,
+            "failed inventory did not cancel/drain the staged copier through its linked operation token");
+        Check(!result.Success && !result.Cancelled, "inventory failure was not reported as a failure");
+        Check(!File.Exists(Path.Combine(f.Local, "slow.bin")) && !f.Source.Queue.Contains(f.Game.Id),
+            "failed inventory committed a mod or queued two-way initialization");
     }
 
     private static async Task DownloadThenBackground()
