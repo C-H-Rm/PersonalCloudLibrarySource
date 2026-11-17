@@ -41,7 +41,7 @@ def prepare(source, output, pwsh):
         if re.findall(r'^Id:\s*(\S+)\s*$', manifest, re.M) != [SOURCE_ID]:
             raise ValueError('Unexpected source theme identity.')
         replacements = {'Id': THEME_ID, 'Name': THEME_NAME,
-                        'Author': 'Super Dario; PCLS integration by C-H-R', 'Version': '2.3.1.2'}
+                        'Author': 'Super Dario; CHR Cloud Library integration by C-H-R', 'Version': '2.3.1.3'}
         for key, value in replacements.items():
             manifest, count = re.subn(r'^' + key + r':[^\r\n]*', key + ': ' + value, manifest, flags=re.M)
             if count != 1:
@@ -53,7 +53,7 @@ def prepare(source, output, pwsh):
                 incoming, prepared = Path(temporary) / f'{index}-original.xaml', Path(temporary) / f'{index}-prepared.xaml'
                 incoming.write_bytes(archive.read(names[view]))
                 result = subprocess.run([pwsh, '-NoProfile', '-File', str(support / 'add-install-progress-to-theme.ps1'),
-                    '-InputFile', str(incoming), '-OutputFile', str(prepared), '-LeftAlign'], capture_output=True, text=True, timeout=30)
+                    '-InputFile', str(incoming), '-OutputFile', str(prepared), '-LeftAlign', '-SourceName', 'CHRCL'], capture_output=True, text=True, timeout=30)
                 if result.returncode:
                     raise ValueError('Cannot integrate ' + view + ': ' + result.stderr)
                 changes[names[view]] = prepared.read_bytes()
@@ -65,7 +65,7 @@ def prepare(source, output, pwsh):
             packed.writestr('PCLS-INTEGRATION.txt',
                 'Local derivative of Daze 2.3.1 by Super Dario. Original theme is not replaced.\n'
                 'Install this .pthm and select Daze - Cloud Progress in Playnite Desktop theme settings.\n'
-                'Requires the Personal Cloud Library plugin build with PCLS_InstallProgress support.\n'
+                'Requires the standalone CHR Cloud Library plugin with CHRCL_InstallProgress support.\n'
                 'Hosts are placed above the action row in both Details and Grid game overviews.\n'
                 'The status is hidden when the selected game has no active download/background status.\n'
                 'Source: https://github.com/dariolupo/Daze_Theme/releases/tag/v2.3.1\n'

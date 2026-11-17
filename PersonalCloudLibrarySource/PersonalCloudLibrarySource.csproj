@@ -7,7 +7,7 @@
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>PersonalCloudLibrarySource</RootNamespace>
-    <AssemblyName>PersonalCloudLibrarySource</AssemblyName>
+    <AssemblyName>CHRCloudLibrary</AssemblyName>
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <Deterministic>true</Deterministic>
@@ -53,6 +53,12 @@
     <Compile Include="LocalFileCopier.cs" />
     <Compile Include="InstallProgressState.cs" />
     <Compile Include="InstallProgressView.cs" />
+    <Compile Include="DownloadHistory.cs" />
+    <Compile Include="DownloadCenter.cs" />
+    <Compile Include="ForkIdentity.cs" />
+    <Compile Include="LegacyLibraryMigration.cs" />
+    <Compile Include="LegacyMigrationIntegration.cs" />
+    <Compile Include="PluginLifecycle.cs" />
     <Compile Include="ModSyncService.cs" />
     <Compile Include="ModSyncProcess.cs" />
     <Compile Include="ModSyncIntegration.cs" />

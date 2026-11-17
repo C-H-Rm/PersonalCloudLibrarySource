@@ -32,7 +32,7 @@ try {
     foreach ($entry in $archive.Entries) {
         $name = $entry.FullName
         if (-not $seen.Add($name)) { throw "Duplicate package entry: $name" }
-        $isRequired = $name -cin @('PersonalCloudLibrarySource.dll', 'extension.yaml', 'icon.png')
+        $isRequired = $name -cin @('CHRCloudLibrary.dll', 'extension.yaml', 'icon.png')
         if (-not $isRequired -and $name -cnotmatch '^Localization/[^/\\]+\.xaml$') {
             throw "Unexpected package entry (dependencies, secrets and nested package roots are not allowed): $name"
         }
@@ -42,7 +42,7 @@ try {
         try { $stream.CopyTo([System.IO.Stream]::Null) }
         finally { $stream.Dispose() }
     }
-    foreach ($required in @('PersonalCloudLibrarySource.dll', 'extension.yaml', 'icon.png', 'Localization/en_US.xaml')) {
+    foreach ($required in @('CHRCloudLibrary.dll', 'extension.yaml', 'icon.png', 'Localization/en_US.xaml')) {
         if ($names -cnotcontains $required) { throw "Required package entry missing: $required" }
     }
 
@@ -53,10 +53,10 @@ try {
     $type = Read-ManifestField $manifest 'Type'
     $icon = Read-ManifestField $manifest 'Icon'
     $displayName = Read-ManifestField $manifest 'Name'
-    if ($id -cne 'PersonalCloudLibrarySource_61993828-67a8-4468-93a2-293442e36328') { throw 'Unexpected Playnite add-on ID.' }
+    if ($id -cne 'CHRCloudLibrary_402561c2-ea33-4c60-a8f8-ec25e997a1d5') { throw 'Unexpected Playnite add-on ID.' }
     if ($version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') { throw 'Version must have three or four numeric components.' }
     $null = [version]::Parse($version)
-    if ($module -cne 'PersonalCloudLibrarySource.dll' -or $type -cne 'GameLibrary' -or $icon -cne 'icon.png' -or -not $displayName) {
+    if ($module -cne 'CHRCloudLibrary.dll' -or $type -cne 'GameLibrary' -or $icon -cne 'icon.png' -or -not $displayName) {
         throw 'Invalid Playnite module/type/icon/name metadata.'
     }
 
@@ -66,10 +66,10 @@ try {
     finally { $dllStream.Dispose(); $memory.Dispose() }
     # Metadata/resource inspection only; this does not instantiate or run the plugin.
     $assembly = [System.Reflection.Assembly]::Load($dllBytes)
-    if ($assembly.GetName().Name -cne 'PersonalCloudLibrarySource') { throw 'DLL assembly name does not match the plugin.' }
+    if ($assembly.GetName().Name -cne 'CHRCloudLibrary') { throw 'DLL assembly name does not match the plugin.' }
     $sdk = @($assembly.GetReferencedAssemblies() | Where-Object { $_.Name -ceq 'Playnite.SDK' })
     if ($sdk.Count -ne 1) { throw 'Plugin DLL must reference Playnite.SDK.' }
-    $resourceStream = $assembly.GetManifestResourceStream('PersonalCloudLibrarySource.g.resources')
+    $resourceStream = $assembly.GetManifestResourceStream('CHRCloudLibrary.g.resources')
     if ($null -eq $resourceStream) { throw 'Compiled WPF resources are missing.' }
     $resourceReader = [System.Resources.ResourceReader]::new($resourceStream)
     $resourceNames = @()

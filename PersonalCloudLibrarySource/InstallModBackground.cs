@@ -48,7 +48,7 @@ namespace PersonalCloudLibrarySource
                     catch (Exception ex) { logger.Warn(ex, "Background mods deferred while the game runs."); }
                 return;
             }
-            if (!InstallProgressState.Shared.TryBegin(game.Id, out var operation)) return;
+            if (!InstallProgressState.Shared.TryBegin(game.Id, out var operation, game.Name)) return;
             lock (backgroundModSessionGate) backgroundModSessions[game.Id] = operation;
             var notificationId = "pcls-mod-background-" + game.Id;
             try

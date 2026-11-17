@@ -1,16 +1,16 @@
-Id: PersonalCloudLibrarySource_61993828-67a8-4468-93a2-293442e36328
-Name: Personal Cloud Library Source
-Author: "The Bearclaw & ztwslayer"
-Version: 0.1.2
-Module: PersonalCloudLibrarySource.dll
+Id: CHRCloudLibrary_402561c2-ea33-4c60-a8f8-ec25e997a1d5
+Name: CHR Cloud Library
+Author: "C-H-R (based on The Bearclaw & ztwslayer)"
+Version: 0.2.0
+Module: CHRCloudLibrary.dll
 Type: GameLibrary
 Icon: icon.png
 Links:
   - Name: GitHub
-    Url: https://github.com/KurtusCobain/PersonalCloudLibrarySource
+    Url: https://github.com/C-H-Rm/PersonalCloudLibrarySource
   - Name: Documentation
-    Url: https://github.com/KurtusCobain/PersonalCloudLibrarySource/tree/main/docs
+    Url: https://github.com/C-H-Rm/PersonalCloudLibrarySource/tree/main/docs
   - Name: Issues
-    Url: https://github.com/KurtusCobain/PersonalCloudLibrarySource/issues
+    Url: https://github.com/C-H-Rm/PersonalCloudLibrarySource/issues
   - Name: Changelog
-    Url: https://github.com/KurtusCobain/PersonalCloudLibrarySource/blob/main/CHANGELOG.md
+    Url: https://github.com/C-H-Rm/PersonalCloudLibrarySource/blob/main/CHANGELOG.md

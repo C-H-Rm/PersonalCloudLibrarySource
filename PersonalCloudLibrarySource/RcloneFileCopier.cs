@@ -25,11 +25,15 @@ namespace PersonalCloudLibrarySource
 
         public RcloneCopyResult CopyMissingRemoteDirectoryToLocalPath(PersonalCloudLibrarySourceSettings settings, string remotePath,
             string localDirectoryPath, CancellationToken cancellationToken, Action<RcloneTransferProgress> progress)
-            => Copy(settings, remotePath, localDirectoryPath, true, cancellationToken, progress, true);
+            => CopyMissingRemoteDirectoryToLocalPath(settings, remotePath, localDirectoryPath, null, cancellationToken, progress);
+
+        public RcloneCopyResult CopyMissingRemoteDirectoryToLocalPath(PersonalCloudLibrarySourceSettings settings, string remotePath,
+            string localDirectoryPath, string comparisonDirectory, CancellationToken cancellationToken, Action<RcloneTransferProgress> progress)
+            => Copy(settings, remotePath, localDirectoryPath, true, cancellationToken, progress, true, comparisonDirectory);
 
         private static RcloneCopyResult Copy(PersonalCloudLibrarySourceSettings settings, string remotePath,
             string destination, bool isDirectory, CancellationToken cancellationToken, Action<RcloneTransferProgress> progressCallback,
-            bool onlyMissing = false)
+            bool onlyMissing = false, string comparisonDirectory = null)
         {
             if (settings == null) throw new ArgumentNullException(nameof(settings));
             if (string.IsNullOrWhiteSpace(remotePath)) return RcloneCopyResult.Fail("Remote path is empty.");
@@ -37,7 +41,7 @@ namespace PersonalCloudLibrarySource
             var remote = (settings.RcloneRemoteName ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(remote)) return RcloneCopyResult.Fail("Rclone remote name is required.");
 
-            var tracker = new RcloneTransferProgressTracker();
+            var tracker = new RcloneTransferProgressTracker(isDirectory);
             var output = new StringBuilder();
             var error = new StringBuilder();
             var logGate = new object();
@@ -74,11 +78,16 @@ namespace PersonalCloudLibrarySource
                         FileName = string.IsNullOrWhiteSpace(settings.RcloneExecutablePath) ? "rclone" : settings.RcloneExecutablePath.Trim(),
                         Arguments = command + " " + RcloneManifestReader.QuoteArgument(remote + ":" + remotePath.Trim()) +
                             " " + RcloneManifestReader.QuoteArgument(destination) +
-                            " --check-first --use-json-log --stats=1s --stats-log-level=NOTICE" +
+                            (isDirectory ? string.Empty : " --check-first") +
+                            " --use-json-log --stats=1s --stats-log-level=NOTICE --log-level=DEBUG" +
                             " --contimeout=" + connectSeconds.ToString(CultureInfo.InvariantCulture) + "s" +
                             " --timeout=" + inactiveSeconds.ToString(CultureInfo.InvariantCulture) + "s" +
                             (isDirectory ? " --retries 5 --low-level-retries 20" : string.Empty) +
-                            (onlyMissing ? " --ignore-existing --exclude \".pcls-modsync-*\"" : string.Empty),
+                            (onlyMissing ? (string.IsNullOrWhiteSpace(comparisonDirectory) ? " --ignore-existing" : string.Empty) +
+                                " --exclude \".pcls-modsync-*\" --exclude \".pcls-stage-owner\"" : string.Empty) +
+                            (onlyMissing && !string.IsNullOrWhiteSpace(comparisonDirectory)
+                                ? " --compare-dest " + RcloneManifestReader.QuoteArgument(comparisonDirectory) + " --size-only --ignore-size"
+                                : string.Empty),
                         UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true
                     };
                     process.OutputDataReceived += (_, args) => Capture(output, args.Data, logGate, timeout, timer, null, null, null);
@@ -143,11 +152,16 @@ namespace PersonalCloudLibrarySource
         {
             if (line == null) return;
             timeout.ObserveLine(line, timer.Elapsed);
-            lock (gate)
+            var debugOnly = RcloneLogEntry.TryParse(line, out var logEntry) &&
+                string.Equals(logEntry.Level, "DEBUG", StringComparison.OrdinalIgnoreCase);
+            if (!debugOnly)
             {
-                const int limit = 65536;
-                buffer.AppendLine(line.Length > limit ? line.Substring(line.Length - limit) : line);
-                if (buffer.Length > limit) buffer.Remove(0, buffer.Length - limit);
+                lock (gate)
+                {
+                    const int limit = 65536;
+                    buffer.AppendLine(line.Length > limit ? line.Substring(line.Length - limit) : line);
+                    if (buffer.Length > limit) buffer.Remove(0, buffer.Length - limit);
+                }
             }
             if (tracker != null)
             {
@@ -155,6 +169,7 @@ namespace PersonalCloudLibrarySource
                 {
                     var previous = tracker.Progress;
                     tracker.ObserveStats(line, timer.ElapsedMilliseconds);
+                    tracker.ObserveLogMessage(line);
                     var current = tracker.Progress;
                     if (current.Phase != previous.Phase || current.TotalBytes != previous.TotalBytes ||
                         current.CompletedBytes != previous.CompletedBytes || current.BytesPerSecond != previous.BytesPerSecond) publish(current);

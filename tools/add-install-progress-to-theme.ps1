@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$InputFile,
     [Parameter(Mandatory = $true)][string]$OutputFile,
-    [switch]$LeftAlign
+    [switch]$LeftAlign,
+    [ValidateSet('PCLS', 'CHRCL')][string]$SourceName = 'PCLS'
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -31,8 +32,13 @@ $column = $row.ParentNode
 if ($row.LocalName -ne 'StackPanel' -or $row.GetAttribute('Orientation') -ne 'Horizontal') {
     throw 'Unsupported button layout: needs one horizontal action row. No theme changes made.'
 }
-$slots = @($document.SelectNodes("//w:ContentControl[@Name='PCLS_InstallProgress' or @x:Name='PCLS_InstallProgress']", $namespaces))
-if ($slots.Count -gt 1) { throw 'Duplicate PCLS install-progress hosts found. No theme changes made.' }
+$controlName = "${SourceName}_InstallProgress"
+$foreignName = if ($SourceName -eq 'CHRCL') { 'PCLS_InstallProgress' } else { 'CHRCL_InstallProgress' }
+if ($document.SelectNodes("//w:ContentControl[@Name='$foreignName' or @x:Name='$foreignName']", $namespaces).Count -gt 0) {
+    throw 'A different progress provider is already present. Use an original theme view.'
+}
+$slots = @($document.SelectNodes("//w:ContentControl[@Name='$controlName' or @x:Name='$controlName']", $namespaces))
+if ($slots.Count -gt 1) { throw 'Duplicate install-progress hosts found. No theme changes made.' }
 # Daze's grid overview puts its single action row directly in a Grid. Wrap
 # only that unambiguous row; retain its placement without editing other controls.
 if ($column.LocalName -eq 'Grid' -and $slots.Count -eq 0) {
@@ -62,7 +68,7 @@ if ($slots.Count -eq 1) {
 } else {
     $slot = $document.CreateElement('ContentControl', $presentation)
     $name = $document.CreateAttribute('x', 'Name', $xaml)
-    $name.Value = 'PCLS_InstallProgress'
+    $name.Value = $controlName
     [void]$slot.Attributes.Append($name)
     $indent = if ($row.PreviousSibling -and $row.PreviousSibling.NodeType -eq [Xml.XmlNodeType]::Whitespace) { $row.PreviousSibling.CloneNode($true) } else { $null }
     [void]$column.InsertBefore($slot, $row)

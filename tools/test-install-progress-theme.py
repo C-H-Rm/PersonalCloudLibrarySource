@@ -35,9 +35,10 @@ class ThemeTests(unittest.TestCase):
         self.output = self.root / 'prepared.xaml'
         self.source.write_text(THEME)
 
-    def run_helper(self, source=None, output=None):
+    def run_helper(self, source=None, output=None, source_name=None):
         return subprocess.run([args.pwsh, '-NoProfile', '-File', str(SCRIPT),
-            '-InputFile', str(source or self.source), '-OutputFile', str(output or self.output)],
+            '-InputFile', str(source or self.source), '-OutputFile', str(output or self.output)]
+            + (['-SourceName', source_name] if source_name else []),
             capture_output=True, text=True, timeout=20)
 
     def test_supported_layout_puts_one_host_above_button_row_without_editing_source(self):
@@ -62,6 +63,24 @@ class ThemeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(again.read_bytes(), self.output.read_bytes())
         self.assertEqual(self.run_helper().returncode, 0)
+
+    def test_standalone_host_is_distinct_and_idempotent(self):
+        first = self.run_helper(source_name='CHRCL')
+        self.assertEqual(first.returncode, 0, first.stderr)
+        content = self.output.read_text()
+        self.assertIn('CHRCL_InstallProgress', content)
+        self.assertNotIn('PCLS_InstallProgress', content)
+        again = self.root / 'again.xaml'
+        result = self.run_helper(source=self.output, output=again, source_name='CHRCL')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(again.read_bytes(), self.output.read_bytes())
+
+    def test_cannot_insert_a_second_provider_into_an_already_prepared_view(self):
+        self.assertEqual(self.run_helper().returncode, 0)
+        again = self.root / 'again.xaml'
+        result = self.run_helper(source=self.output, output=again, source_name='CHRCL')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(again.exists())
 
     def test_cannot_overwrite_active_input(self):
         original = self.source.read_bytes()

@@ -34,7 +34,7 @@ namespace PersonalCloudLibrarySource
 
         public override async void Install(InstallActionArgs args)
         {
-            if (!InstallProgressState.Shared.TryBegin(Game.Id, out var operation)) return;
+            if (!InstallProgressState.Shared.TryBegin(Game.Id, out var operation, Game.Name)) return;
             var installed = false;
             var modsDownloaded = false;
             try
@@ -152,7 +152,7 @@ namespace PersonalCloudLibrarySource
 
         private async void RetryMods()
         {
-            if (!InstallProgressState.Shared.TryBegin(Game.Id, out var operation)) return;
+            if (!InstallProgressState.Shared.TryBegin(Game.Id, out var operation, Game.Name)) return;
             var downloaded = false;
             try
             {

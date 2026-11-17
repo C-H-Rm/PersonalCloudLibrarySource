@@ -464,7 +464,7 @@ namespace System.Windows
 }
 namespace Playnite.SDK.Models
 {
-    public class Game { public Guid Id = Guid.NewGuid(), PluginId; public string GameId = "test", InstallDirectory; public bool IsInstalled, IsUninstalling, IsInstalling; public System.Collections.ObjectModel.ObservableCollection<GameAction> GameActions; }
+    public class Game { public Guid Id = Guid.NewGuid(), PluginId; public string Name = "Test game", GameId = "test", InstallDirectory; public bool IsInstalled, IsUninstalling, IsInstalling; public System.Collections.ObjectModel.ObservableCollection<GameAction> GameActions; }
     public enum GameActionType { File }
     public class GameAction { public string Name, Path, WorkingDir; public GameActionType Type; public bool IsPlayAction; }
 }

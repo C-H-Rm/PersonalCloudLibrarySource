@@ -63,7 +63,8 @@ namespace PersonalCloudLibrarySource
 
         public override void OnApplicationStopped(OnApplicationStoppedEventArgs args)
         {
-            postInstallModSync.CancelAll();
+            try { postInstallModSync.CancelAll(); }
+            finally { CloseDownloadCenter(); }
         }
 
         private ModSyncResult RunModSync(Game game, bool justStopped, bool manual, bool relink)

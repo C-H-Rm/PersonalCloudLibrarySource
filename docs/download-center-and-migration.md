@@ -1,0 +1,37 @@
+# Download center and standalone migration
+
+## Standalone identity
+
+**CHR Cloud Library** is a separate extension from Personal Cloud Library Source:
+
+- Add-on ID: `CHRCloudLibrary_402561c2-ea33-4c60-a8f8-ec25e997a1d5`.
+- Runtime plugin ID: `402561c2-ea33-4c60-a8f8-ec25e997a1d5`.
+- Assembly/module: `CHRCloudLibrary.dll`. The source namespace is retained, not its old CLR assembly identity.
+- Theme element: `CHRCL_InstallProgress`, independently registered from the earlier `PCLS_InstallProgress` test build.
+- Own data directory under Playnite's extension-data root, keyed by the new runtime UUID.
+
+The upstream add-on catalog identifies another extension. An update to upstream does not overwrite this fork. This does not add an automatic update feed or publish a release. Local candidate packages and public Releases must be distinguished.
+
+Adoption preserves the copied configuration bytes and last-write time. The historical default library name is mapped to the standalone name for display only; custom library names are preserved. Changing settings later is a separate explicit user action.
+
+## Switching an existing library
+
+1. Finish downloads, stop running cloud games, and disable the original **Personal Cloud Library Source** extension. Restart Playnite. Do not delete its games or data.
+2. Install the standalone `CHRCloudLibrary-0.2.0.pext`; restart as requested.
+3. Use the explicit adoption prompt to copy settings and safety state and transfer ownership of existing game records. Their Playnite database IDs must be preserved: do not delete/reimport them. A separate fresh setup is also possible; it is not implicit migration.
+4. If using inline Daze progress, install **Daze - Cloud Progress 2.3.1.3** or newer. The earlier theme used the legacy provider name. The derived theme keeps its own existing theme ID, so this updates the derived copy, not upstream Daze.
+5. Check existing games, settings and cached installation paths before removing the disabled old extension. Keep the original data for rollback.
+
+Adoption does not download, upload, bisync, clear folders or change game-install directories. It must refuse active legacy ownership, in-flight/running games, duplicate ownership and conflicting destination state rather than guessing. Existing mod-sync history/baselines are not reset or marked ready to make migration pass. Original source data remains intact. The migration menu provides a deliberate retry route if the initial prompt was cancelled.
+
+## Download center
+
+The Desktop top-panel down-arrow item opens one modeless window. It observes the same per-operation state as the inline game-details bar; it is not another download engine or a queue scheduler. Live operations are visible across games, without selecting each one. Background mod synchronization is labelled separately from downloading.
+
+Active rows show available real progress and transfer metrics. Unknown totals are indeterminate. History distinguishes successful, failed, cancelled and interrupted attempts; a retry is another operation, not a rewrite of the previous result. A bounded history survives restarts. An operation left active at shutdown is shown as interrupted on the next start, not falsely resumed. History begins with this version; earlier builds did not record it.
+
+Daze's actual `PART_PanelMainPluginItems` is hosted in `Views/TopPanel.xaml`, with docking controlled by Playnite's `PluginTopPanelAlignment` preference. The native default is **Right**, verified in pinned `source/Playnite/Settings/PlayniteSettings.cs`; the position option belongs to the Appearance / Top Panel settings. The extension uses that supported host; it does not move other extensions or modify a global appearance setting. Native theme resources supply colors and styling. The top-panel center works independently of the optional custom inline-progress theme.
+
+## Verification boundary
+
+Linked-source fixtures test operation identity, lifecycle/history/persistence and adoption safety. The full .NET Framework 4.8 build uses the actual Playnite SDK and compiled WPF resources, and the package verifier checks the actual payload. These are not a running Windows Playnite or real Nextcloud test. Confirm physical toolbar placement, window rendering, theme layout and adoption on the user's Windows installation before claiming those deployed effects.

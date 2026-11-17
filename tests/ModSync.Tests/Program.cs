@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using PersonalCloudLibrarySource;
 
 internal static class Program
@@ -265,8 +266,8 @@ internal static class Program
             var result = f.Service.DownloadAfterInstall(f.Request, _ => new ModSyncResult { Success = true });
             Check(result.Success, result.Message);
             var commands = File.ReadAllLines(audit);
-            Check(commands.Contains("lsf") && commands.Contains("--recursive") && commands.Contains("--files-only"), "metadata-only list absent");
-            Check(!commands.Contains("--hash") && !commands.Contains("lsjson") && !commands.Contains("check") &&
+            Check(commands.Contains("lsjson") && commands.Contains("--recursive") && commands.Contains("--files-only"), "metadata-only list absent");
+            Check(!commands.Contains("--hash") && !commands.Contains("check") &&
                 !commands.Contains("bisync") && !commands.Contains("copy") && !commands.Contains("copyto") && !commands.Contains("mkdir"),
                 "install listing invoked content comparison or mutation: " + string.Join(" ", commands));
         });
@@ -274,12 +275,11 @@ internal static class Program
             if (!OperatingSystem.IsLinux()) return;
             Directory.Delete(f.RemoteRoot, true);
             var wrapper = System.IO.Path.Combine(f.Root, "missing-cloud-rclone.sh");
-            File.WriteAllText(wrapper, "#!/bin/sh\n[ \"$1\" = lsf ] && exit 3\nexit 90\n");
+            File.WriteAllText(wrapper, "#!/bin/sh\n[ \"$1\" = lsjson ] && exit 3\nexit 90\n");
             File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             f.Request.RcloneExecutable = wrapper;
-            var called = false;
-            var result = f.Service.DownloadAfterInstall(f.Request, _ => { called = true; return new ModSyncResult { Success = true }; });
-            Check(result.Success && !called && !Directory.Exists(f.RemoteRoot), "missing unpaired cloud path was not a no-op or remote mkdir occurred");
+            var result = f.Service.DownloadAfterInstall(f.Request, _ => new ModSyncResult { Success = true });
+            Check(result.Success && !Directory.Exists(f.RemoteRoot), "missing unpaired cloud path was not a no-op or remote mkdir occurred");
             Check(!File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt")) && !File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")), "no-op initialized pairing");
         });
         Test("install-only does not treat missing cloud path as empty when old pairing exists", f => {
@@ -291,12 +291,11 @@ internal static class Program
             File.WriteAllText(System.IO.Path.Combine(f.Request.StateDirectory, "ready"), "ready");
             Directory.Delete(f.RemoteRoot, true);
             var wrapper = System.IO.Path.Combine(f.Root, "missing-paired-cloud-rclone.sh");
-            File.WriteAllText(wrapper, "#!/bin/sh\n[ \"$1\" = lsf ] && exit 3\nexit 90\n");
+            File.WriteAllText(wrapper, "#!/bin/sh\n[ \"$1\" = lsjson ] && exit 3\nexit 90\n");
             File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             f.Request.RcloneExecutable = wrapper;
-            var called = false;
-            var result = f.Service.DownloadAfterInstall(f.Request, _ => { called = true; return new ModSyncResult { Success = true }; });
-            Check(!result.Success && !called && File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")), "missing paired cloud path bypassed protection");
+            var result = f.Service.DownloadAfterInstall(f.Request, _ => new ModSyncResult { Success = true });
+            Check(!result.Success && File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")), "missing paired cloud path bypassed protection");
         });
         Test("install-only download preserves cloud and local additions without creating a ready baseline", f => {
             f.Cloud("cloud.txt", "cloud"); f.Local("local.txt", "local");
@@ -317,11 +316,13 @@ internal static class Program
         Test("install-only download pauses completed identity before callback and preserves pair", f => {
             f.Local("kept", "kept"); f.Sync();
             var pair = File.ReadAllText(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt"));
+            var wasPaused = false;
             var result = f.Service.DownloadAfterInstall(f.Request, _ =>
             {
-                Check(File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "paused")), "pair was not paused under lock before download");
+                wasPaused = File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "paused"));
                 return new ModSyncResult { Success = false, Message = "fixture failure" };
             });
+            Check(wasPaused, "pair was not paused under lock before download");
             Check(!result.Success && File.ReadAllText(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt")) == pair, "failure reset completed pairing");
             Check(File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")), "failure removed ready evidence");
         });
@@ -335,13 +336,16 @@ internal static class Program
             Directory.CreateDirectory(f.Request.StateDirectory);
             File.WriteAllText(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt"), f.LocalRoot + "\n" + f.Request.RemoteFolder);
             f.Cloud("cloud", "cloud");
-            var result = f.Service.DownloadAfterInstall(f.Request, _ => new ModSyncResult { Success = true });
+            var result = f.Service.DownloadAfterInstall(f.Request, request => {
+                File.WriteAllText(System.IO.Path.Combine(request.LocalFolder, "cloud"), "cloud");
+                return new ModSyncResult { Success = true };
+            });
             Check(result.Success && !File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")), "incomplete state was promoted");
             Check(File.ReadAllText(System.IO.Path.Combine(f.Request.StateDirectory, "pair.txt")) == f.LocalRoot + "\n" + f.Request.RemoteFolder, "incomplete identity changed");
         });
         Test("install-only failed and cancelled callbacks retain retryable state", f => {
             var failure = f.Service.DownloadAfterInstall(f.Request, _ => new ModSyncResult { Success = false, Message = "retry" });
-            Check(!failure.Success && !failure.Cancelled && failure.Message == "retry" && !File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")), "failure result/state incorrect");
+            Check(!failure.Success && !failure.Cancelled && failure.Message == "retry" && !File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")), "failure result/state incorrect: success=" + failure.Success + " cancelled=" + failure.Cancelled + " message=" + failure.Message + " ready=" + File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "ready")));
             using (var cts = new CancellationTokenSource()) {
                 f.Request.CancellationToken = cts.Token;
                 var cancelled = f.Service.DownloadAfterInstall(f.Request, _ => { cts.Cancel(); return new ModSyncResult { Success = false, Cancelled = true }; });
@@ -351,9 +355,157 @@ internal static class Program
         Test("install-only rejects a Windows case alias before callback", f => {
             if (!OperatingSystem.IsLinux()) return;
             f.Cloud("MOD.BIN", "cloud"); f.Local("mod.bin", "local");
+            var result = f.Service.DownloadAfterInstall(f.Request, _ => new ModSyncResult { Success = true });
+            Check(!result.Success && File.ReadAllText(f.Path("mod.bin")) == "local", "case alias changed original local file");
+        });
+        Test("composed install inventory overlaps native staged transfer and preserves modified originals", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            f.Local("same.bin", "user-modified-original"); f.Cloud("same.bin", "remote-version-different-size");
+            f.Cloud("fresh.bin", new string('x', 4 * 1024 * 1024));
+            var real = Environment.GetEnvironmentVariable("PCLS_RCLONE") ?? "rclone";
+            var listingDone = System.IO.Path.Combine(f.Root, "listing-done");
+            var wrapper = System.IO.Path.Combine(f.Root, "delayed-inventory-rclone.sh");
+            File.WriteAllText(wrapper, "#!/bin/bash\nif [ \"$1\" = lsjson ]; then\n  out=\"" + f.Root + "/inventory.json\"\n  \"" + real + "\" \"$@\" > \"$out\" || exit $?\n  sleep 3\n  cat \"$out\"\n  touch \"" + listingDone + "\"\n  exit 0\nfi\nexec \"" + real + "\" \"$@\"\n");
+            File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            f.Request.RcloneExecutable = wrapper;
+            var sawStagedBytesBeforeListing = false;
+            var cpuBefore = Process.GetCurrentProcess().TotalProcessorTime;
+            var serviceTask = Task.Run(() => f.Service.DownloadAfterInstall(f.Request, request => {
+                var settings = new PersonalCloudLibrarySourceSettings { RcloneRemoteName = "fixture", RcloneExecutablePath = request.RcloneExecutable };
+                var copy = new RcloneFileCopier().CopyMissingRemoteDirectoryToLocalPath(settings, f.RemoteRoot, request.LocalFolder,
+                    request.DownloadCompareDirectory, request.CancellationToken, _ => { });
+                return new ModSyncResult { Success = copy.Succeeded, Cancelled = copy.Cancelled, Message = copy.Message };
+            }));
+            var parent = System.IO.Path.GetDirectoryName(f.LocalRoot);
+            var until = DateTime.UtcNow.AddSeconds(10);
+            while (DateTime.UtcNow < until && !serviceTask.IsCompleted && !File.Exists(listingDone)) {
+                var staged = Directory.Exists(parent) ? Directory.GetDirectories(parent, "Mods.pcls-stage-*") : new string[0];
+                if (staged.SelectMany(path => Directory.GetFiles(path, "fresh.bin", SearchOption.AllDirectories)).Any(path => new FileInfo(path).Length > 0))
+                    sawStagedBytesBeforeListing = true;
+                Check(File.ReadAllText(f.Path("same.bin")) == "user-modified-original", "original changed while full listing was pending");
+                Thread.Sleep(25);
+            }
+            var result = serviceTask.GetAwaiter().GetResult();
+            Check(sawStagedBytesBeforeListing, "native staged bytes did not arrive before the delayed complete lsjson inventory");
+            Check(Process.GetCurrentProcess().TotalProcessorTime - cpuBefore < TimeSpan.FromSeconds(1.5),
+                "completed fan-in task caused CPU busy-wait during the delayed inventory");
+            Check(result.Success, result.Message);
+            Check(File.ReadAllText(f.Path("same.bin")) == "user-modified-original", "modified original was downloaded or overwritten");
+            Check(File.ReadAllText(f.Path("fresh.bin")) == new string('x', 4 * 1024 * 1024), "validated missing file was not committed");
+        });
+        Test("late case collision rejects composed staged bytes without changing any original user file", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            f.Local("mod.bin", "original-case"); f.Local("keep.bin", "keep-original");
+            f.Cloud("MOD.BIN", "case-alias"); f.Cloud("new.bin", "must-not-commit");
+            var real = Environment.GetEnvironmentVariable("PCLS_RCLONE") ?? "rclone";
+            var wrapper = System.IO.Path.Combine(f.Root, "delayed-collision-rclone.sh");
+            File.WriteAllText(wrapper, "#!/bin/bash\nif [ \"$1\" = lsjson ]; then\n  out=\"" + f.Root + "/inventory.json\"\n  \"" + real + "\" \"$@\" > \"$out\" || exit $?\n  sleep 1\n  cat \"$out\"\n  exit 0\nfi\nexec \"" + real + "\" \"$@\"\n");
+            File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            f.Request.RcloneExecutable = wrapper;
+            var result = f.Service.DownloadAfterInstall(f.Request, request => {
+                var settings = new PersonalCloudLibrarySourceSettings { RcloneRemoteName = "fixture", RcloneExecutablePath = request.RcloneExecutable };
+                var copy = new RcloneFileCopier().CopyMissingRemoteDirectoryToLocalPath(settings, f.RemoteRoot,
+                    request.LocalFolder, request.DownloadCompareDirectory, request.CancellationToken, _ => { });
+                return new ModSyncResult { Success = copy.Succeeded, Cancelled = copy.Cancelled, Message = copy.Message };
+            });
+            Check(!result.Success, "late case collision was accepted");
+            Check(File.ReadAllText(f.Path("mod.bin")) == "original-case" && File.ReadAllText(f.Path("keep.bin")) == "keep-original" &&
+                !File.Exists(f.Path("new.bin")) && !File.Exists(f.Path("MOD.BIN")), "ambiguous inventory changed original user data");
+            Check(Directory.GetDirectories(System.IO.Path.GetDirectoryName(f.LocalRoot), "Mods.pcls-stage-*.quarantine-*").Length == 1,
+                "ambiguous stage was not quarantined");
+        });
+        Test("cancelled partial native staging remains retryable without touching originals", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            f.Local("keep.bin", "user-data"); f.Cloud("large.bin", new string('z', 2 * 1024 * 1024));
+            var real = Environment.GetEnvironmentVariable("PCLS_RCLONE") ?? "rclone";
+            var wrapper = System.IO.Path.Combine(f.Root, "slow-stage-rclone.sh");
+            File.WriteAllText(wrapper, "#!/bin/bash\nif [ \"$1\" = copy ]; then exec \"" + real + "\" \"$@\" --bwlimit 64k; fi\nexec \"" + real + "\" \"$@\"\n");
+            File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            f.Request.RcloneExecutable = wrapper;
+            using (var cts = new CancellationTokenSource()) {
+                f.Request.CancellationToken = cts.Token;
+                var pending = Task.Run(() => f.Service.DownloadAfterInstall(f.Request, request => {
+                    var settings = new PersonalCloudLibrarySourceSettings { RcloneRemoteName = "fixture", RcloneExecutablePath = request.RcloneExecutable };
+                    var copy = new RcloneFileCopier().CopyMissingRemoteDirectoryToLocalPath(settings, f.RemoteRoot,
+                        request.LocalFolder, request.DownloadCompareDirectory, request.CancellationToken, _ => { });
+                    return new ModSyncResult { Success = copy.Succeeded, Cancelled = copy.Cancelled, Message = copy.Message };
+                }));
+                var stageRoot = System.IO.Path.GetDirectoryName(f.LocalRoot);
+                var until = DateTime.UtcNow.AddSeconds(10);
+                while (DateTime.UtcNow < until && !pending.IsCompleted) {
+                    var staged = Directory.GetDirectories(stageRoot, "Mods.pcls-stage-*")
+                        .SelectMany(path => Directory.GetFiles(path, "*", SearchOption.AllDirectories))
+                        .Where(path => !path.EndsWith(".pcls-stage-owner", StringComparison.Ordinal)).FirstOrDefault(path => new FileInfo(path).Length > 0);
+                    if (staged != null) { cts.Cancel(); break; }
+                    Thread.Sleep(25);
+                }
+                var cancelled = pending.GetAwaiter().GetResult();
+                Check(cancelled.Cancelled && !cancelled.Success, "real staged transfer did not report cancellation");
+                Check(File.ReadAllText(f.Path("keep.bin")) == "user-data" && !File.Exists(f.Path("large.bin")), "cancelled stage changed user files");
+            }
+            f.Request.CancellationToken = CancellationToken.None;
+            f.Request.RcloneExecutable = real;
+            var retried = f.Service.DownloadAfterInstall(f.Request, request => {
+                var settings = new PersonalCloudLibrarySourceSettings { RcloneRemoteName = "fixture", RcloneExecutablePath = request.RcloneExecutable };
+                var copy = new RcloneFileCopier().CopyMissingRemoteDirectoryToLocalPath(settings, f.RemoteRoot,
+                    request.LocalFolder, request.DownloadCompareDirectory, request.CancellationToken, _ => { });
+                return new ModSyncResult { Success = copy.Succeeded, Cancelled = copy.Cancelled, Message = copy.Message };
+            });
+            Check(retried.Success && File.ReadAllText(f.Path("large.bin")) == new string('z', 2 * 1024 * 1024), "retry did not repair/reuse the retained owned stage: " + retried.Message);
+            Check(File.ReadAllText(f.Path("keep.bin")) == "user-data", "retry altered original user data");
+        });
+        Test("install staging rejects an unowned pre-existing sibling directory", f => {
+            var local = System.IO.Path.GetFullPath(f.LocalRoot).TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar);
+            var stage = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(local), System.IO.Path.GetFileName(local) + ".pcls-stage-" +
+                ModSyncService.Key(f.Request.GameId + "\n" + local + "\n" + f.Request.RemoteFolder).Substring(0, 24));
+            Directory.CreateDirectory(stage); File.WriteAllText(System.IO.Path.Combine(stage, "unowned.txt"), "do not adopt");
             var called = false;
             var result = f.Service.DownloadAfterInstall(f.Request, _ => { called = true; return new ModSyncResult { Success = true }; });
-            Check(!result.Success && !called && File.ReadAllText(f.Path("mod.bin")) == "local", "case alias reached download");
+            Check(!result.Success && !called && File.ReadAllText(System.IO.Path.Combine(stage, "unowned.txt")) == "do not adopt",
+                "unowned stage was adopted or altered");
+        });
+        Test("native metadata size mismatch quarantines stage without committing", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            f.Cloud("fresh.bin", "native-bytes");
+            var real = Environment.GetEnvironmentVariable("PCLS_RCLONE") ?? "rclone";
+            var wrapper = System.IO.Path.Combine(f.Root, "wrong-size-inventory-rclone.sh");
+            File.WriteAllText(wrapper, "#!/bin/bash\nif [ \"$1\" = lsjson ]; then\n  out=\"" + f.Root + "/inventory.json\"\n  \"" + real + "\" \"$@\" > \"$out\" || exit $?\n  sed -E 's/\"Size\"[[:space:]]*:[[:space:]]*[0-9]+/\"Size\":99999999/g' \"$out\"\n  exit 0\nfi\nexec \"" + real + "\" \"$@\"\n");
+            File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            f.Request.RcloneExecutable = wrapper;
+            var result = f.Service.DownloadAfterInstall(f.Request, request => {
+                var settings = new PersonalCloudLibrarySourceSettings { RcloneRemoteName = "fixture", RcloneExecutablePath = request.RcloneExecutable };
+                var copy = new RcloneFileCopier().CopyMissingRemoteDirectoryToLocalPath(settings, f.RemoteRoot,
+                    request.LocalFolder, request.DownloadCompareDirectory, request.CancellationToken, _ => { });
+                return new ModSyncResult { Success = copy.Succeeded, Cancelled = copy.Cancelled, Message = copy.Message };
+            });
+            Check(!result.Success && !File.Exists(f.Path("fresh.bin")), "size-mismatched staged bytes were committed");
+            Check(Directory.GetDirectories(System.IO.Path.GetDirectoryName(f.LocalRoot), "Mods.pcls-stage-*.quarantine-*").Length == 1,
+                "size-mismatched stage was not quarantined");
+        });
+        Test("install-only refuses successful copier output missing an inventoried file", f => {
+            f.Cloud("missing.bin", "required bytes");
+            var result = f.Service.DownloadAfterInstall(f.Request, _ => new ModSyncResult { Success = true });
+            Check(!result.Success && !File.Exists(f.Path("missing.bin")), "missing required staged file was reported as installed");
+        });
+        Test("install-only rejects literal backslashes without repairing the remote path", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            f.Cloud("bad\\name.bin", "unsafe filename");
+            var result = f.Service.DownloadAfterInstall(f.Request, _ => new ModSyncResult { Success = true });
+            Check(!result.Success && result.Message.Contains("unsafe Windows"), "unsafe remote name was repaired instead of refused: " + result.Message);
+        });
+        Test("install-only revalidates a destination replaced by a link during download", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            f.Cloud("fresh.bin", "outside must stay untouched");
+            var external = System.IO.Path.Combine(f.Root, "external-after-start"); Directory.CreateDirectory(external);
+            var result = f.Service.DownloadAfterInstall(f.Request, request => {
+                var settings = new PersonalCloudLibrarySourceSettings { RcloneRemoteName = "fixture", RcloneExecutablePath = request.RcloneExecutable };
+                var copy = new RcloneFileCopier().CopyMissingRemoteDirectoryToLocalPath(settings, f.RemoteRoot,
+                    request.LocalFolder, request.DownloadCompareDirectory, request.CancellationToken, _ => { });
+                Directory.Move(f.LocalRoot, f.LocalRoot + "-retained");
+                Directory.CreateSymbolicLink(f.LocalRoot, external);
+                return new ModSyncResult { Success = copy.Succeeded, Message = copy.Message };
+            });
+            Check(!result.Success && !File.Exists(System.IO.Path.Combine(external, "fresh.bin")), "late destination link redirected the staged merge");
         });
         Test("install-only validates launch and rejects linked ancestors before mkdir", f => {
             if (!OperatingSystem.IsLinux()) return;

@@ -16,7 +16,7 @@ namespace PersonalCloudLibrarySource
         private void RegisterInlineInstallProgress()
         {
             AddCustomElementSupport(new AddCustomElementSupportArgs {
-                SourceName = "PCLS", ElementList = new List<string> { "InstallProgress" } });
+                SourceName = "CHRCL", ElementList = new List<string> { "InstallProgress" } });
         }
 
         public override Control GetGameViewControl(GetGameViewControlArgs args)

@@ -21,14 +21,23 @@ namespace PersonalCloudLibrarySource
         }
     }
 
-    /// <summary>Converts rclone JSON statistics into a fixed-denominator whole-transfer estimate.</summary>
+    /// <summary>Converts rclone JSON statistics into transfer progress without treating discovery totals as final.</summary>
     public sealed class RcloneTransferProgressTracker
     {
         private readonly object gate = new object();
+        private readonly bool freezeTotalAfterChecks;
         private readonly RcloneTransferProgress progress = new RcloneTransferProgress { Phase = "Inventory" };
         private bool transferStarted;
         private long previousBytes;
+        private long? latestTotalBytes;
+        private bool checksFinished;
+        private bool totalFrozen;
         private bool retrying;
+
+        public RcloneTransferProgressTracker(bool freezeTotalAfterChecks = false)
+        {
+            this.freezeTotalAfterChecks = freezeTotalAfterChecks;
+        }
 
         public RcloneTransferProgress Progress { get { lock (gate) return progress.Copy(); } }
 
@@ -40,15 +49,20 @@ namespace PersonalCloudLibrarySource
             {
                 if (transferStarted && stats.Bytes < previousBytes) retrying = true;
                 previousBytes = stats.Bytes;
-                // --check-first ensures rclone completes its compare/check pass before a transfer begins.
-                // Do not expose growing discovery totals during that pass; latch totalBytes only at transfer start.
+                if (stats.TotalBytes.HasValue) latestTotalBytes = stats.TotalBytes.Value;
+                if (freezeTotalAfterChecks && checksFinished && !totalFrozen && stats.TotalBytes.HasValue)
+                {
+                    progress.TotalBytes = latestTotalBytes.Value;
+                    totalFrozen = true;
+                }
                 if (!transferStarted && (stats.Transfers > 0 || stats.Bytes > 0))
                 {
                     transferStarted = true;
                     progress.Phase = "Downloading";
-                    if (stats.TotalBytes.HasValue) progress.TotalBytes = stats.TotalBytes.Value;
                 }
                 if (!transferStarted) return;
+                if (!freezeTotalAfterChecks && !progress.TotalBytes.HasValue && stats.TotalBytes.HasValue)
+                    progress.TotalBytes = stats.TotalBytes.Value;
 
                 progress.CompletedBytes = stats.Bytes;
                 if (progress.TotalBytes.HasValue && progress.CompletedBytes > progress.TotalBytes.Value)
@@ -56,14 +70,13 @@ namespace PersonalCloudLibrarySource
                 progress.BytesPerSecond = IsFiniteNonNegative(stats.Speed) ? stats.Speed : 0;
                 if (retrying)
                 {
-                    // A reset byte counter no longer proves unique whole-transfer completion.
                     progress.Phase = "Retrying";
                     progress.Percentage = null;
                 }
-                else if (progress.TotalBytes > 0 && progress.CompletedBytes >= progress.TotalBytes)
+                else if ((!freezeTotalAfterChecks || totalFrozen) && progress.TotalBytes > 0 && progress.CompletedBytes >= progress.TotalBytes)
                 {
                     progress.Phase = "Finishing";
-                    progress.Percentage = null; // Successful process exit, not a byte counter, authorizes 100%.
+                    progress.Percentage = null;
                 }
                 else
                 {
@@ -72,6 +85,17 @@ namespace PersonalCloudLibrarySource
                         ? Math.Floor(progress.CompletedBytes * 1000.0 / progress.TotalBytes.Value) / 10.0
                         : (double?)null;
                 }
+            }
+        }
+
+        public void ObserveLogMessage(string jsonLine)
+        {
+            if (!freezeTotalAfterChecks || !RcloneLogEntry.TryParse(jsonLine, out var entry) ||
+                string.IsNullOrEmpty(entry.Message) || !string.Equals(entry.Level, "DEBUG", StringComparison.OrdinalIgnoreCase) ||
+                entry.Message.IndexOf("Waiting for transfers to finish", StringComparison.Ordinal) < 0) return;
+            lock (gate)
+            {
+                checksFinished = true;
             }
         }
 
@@ -100,6 +124,22 @@ namespace PersonalCloudLibrarySource
     internal sealed class RcloneLogEntry
     {
         [DataMember(Name = "stats")] public RcloneStats Stats { get; set; }
+        [DataMember(Name = "level")] public string Level { get; set; }
+        [DataMember(Name = "msg")] public string Message { get; set; }
+
+        internal static bool TryParse(string line, out RcloneLogEntry entry)
+        {
+            entry = null;
+            if (string.IsNullOrWhiteSpace(line) || line.Length > 65536) return false;
+            try
+            {
+                var serializer = new DataContractJsonSerializer(typeof(RcloneLogEntry));
+                using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(line)))
+                    entry = serializer.ReadObject(stream) as RcloneLogEntry;
+                return entry != null;
+            }
+            catch { return false; }
+        }
     }
 
     [DataContract]
