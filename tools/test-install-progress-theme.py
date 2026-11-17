@@ -20,6 +20,13 @@ THEME = f'''<ResourceDictionary xmlns="{W}" xmlns:x="{X}" xmlns:d="urn:design-fi
 
 
 class ThemeTests(unittest.TestCase):
+    def grid_theme(self, extra=''):
+        return f'''<ResourceDictionary xmlns="{W}" xmlns:x="{X}"><ControlTemplate>
+<Grid DockPanel.Dock="Top" Margin="-3,0,0,0">
+<StackPanel Orientation="Horizontal" Grid.Row="2" Panel.ZIndex="3" Margin="0,10,0,10">
+<Button Name="PART_ButtonContextAction" Width="150"/><Button Name="Other"/></StackPanel>{extra}
+</Grid></ControlTemplate></ResourceDictionary>'''
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='pcls-theme-test-')
         self.addCleanup(self.temp.cleanup)
@@ -60,6 +67,38 @@ class ThemeTests(unittest.TestCase):
         original = self.source.read_bytes()
         self.assertNotEqual(self.run_helper(output=self.source).returncode, 0)
         self.assertEqual(self.source.read_bytes(), original)
+
+    def test_daze_grid_single_row_wraps_above_actions_preserving_placement(self):
+        self.source.write_text(self.grid_theme())
+        original = self.source.read_bytes()
+        result = self.run_helper()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.source.read_bytes(), original)
+        grid = ET.parse(self.output).find('.//{' + W + '}Grid')
+        assert grid is not None
+        self.assertEqual(grid.get('DockPanel.Dock'), 'Top')
+        column, = list(grid)
+        self.assertEqual(column.tag, '{' + W + '}StackPanel')
+        self.assertEqual(column.get('Grid.Row'), '2')
+        self.assertEqual(column.get('Panel.ZIndex'), '3')
+        host, row = list(column)
+        self.assertEqual(host.get('{' + X + '}Name'), 'PCLS_InstallProgress')
+        self.assertEqual(row.get('Margin'), '0,10,0,10')
+        self.assertEqual(list(row)[0].get('Width'), '150')
+
+    def test_daze_grid_prepared_copy_is_idempotent(self):
+        self.source.write_text(self.grid_theme())
+        first = self.run_helper()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        again = self.root / 'again.xaml'
+        result = self.run_helper(source=self.output, output=again)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(again.read_bytes(), self.output.read_bytes())
+
+    def test_ambiguous_grid_with_another_child_is_refused(self):
+        self.source.write_text(self.grid_theme('<TextBlock Text="Unrelated overlay"/>'))
+        self.assertNotEqual(self.run_helper().returncode, 0)
+        self.assertFalse(self.output.exists())
 
     def test_existing_different_output_is_preserved(self):
         self.output.write_text('Keep this existing file')

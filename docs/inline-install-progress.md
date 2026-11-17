@@ -22,7 +22,7 @@ A plugin cannot place a supported custom control at an arbitrary coordinate in e
 
 The SDK binds the selected game through `PluginUserControl.GameContext`; the control hides for unrelated games or when there is no installation/status to show. It unsubscribes when unloaded and marshals transfer updates onto its WPF dispatcher.
 
-`tools/add-install-progress-to-theme.ps1` prepares a separate XAML copy for the standard-style layout (`PART_ButtonContextAction` in a horizontal StackPanel inside a vertical StackPanel):
+`tools/add-install-progress-to-theme.ps1` prepares a separate XAML copy for the standard-style layout (`PART_ButtonContextAction` in a horizontal StackPanel inside a vertical StackPanel). It also supports Daze's single-row Grid by inserting a vertical wrapper and retaining grid placement. Grids with additional elements/definitions are refused rather than rearranged:
 
 ```powershell
 ./tools/add-install-progress-to-theme.ps1 -InputFile './DetailsViewGameOverview.xaml' -OutputFile './prepared/DetailsViewGameOverview.xaml'
@@ -32,11 +32,28 @@ The helper never overwrites its input, refuses an existing different output, det
 
 The actual current theme and its rendered Windows layout must be verified during deployment. Registering the control or passing an SDK build alone does **not** prove that an unmodified theme displays it.
 
+## Installable Daze integration
+
+The private **Daze - Cloud Progress** theme is a separate copy of the official Daze 2.3.1 release. Install its `.pthm`, select **Daze - Cloud Progress** in Playnite Desktop's theme settings, and restart as requested by Playnite. Keep the Personal Cloud Library plugin build with `PCLS_InstallProgress` enabled. A `.pthm` is a theme, not a replacement plugin `.pext`.
+
+Both Details and Grid game overviews include the host directly above their installation/action row. The status is only visible for the selected cloud-library game while its download/background status exists; no idle progress bar is shown. The original Daze remains installed and selectable. Choosing the original Daze reverses this UI change. Existing ThemeModifier choices are not automatically migrated to the new theme identity.
+
+Reproduce from the pinned official input (download separately; the tool does not access the network):
+
+```text
+python tools/prepare-daze-progress-theme.py --input Daze_27790ca9-d3a4-480f-bffe-914ec6768363_2_3_1.pthm --output Daze-Cloud-Progress-2.3.1.1.pthm --pwsh <pwsh executable>
+```
+
+The source archive SHA-256 is pinned in the tool. All original resources remain byte-identical except `theme.yaml` and the two overview XAMLs. A new ID/name prevents replacing upstream Daze; its MIT license and an integration note are included. The package format preserves the original Playnite theme ZIP structure. Upstream source: https://github.com/dariolupo/Daze_Theme/releases/tag/v2.3.1 . Native manifest and Toolbox packaging format inspected at Playnite commit `e2e6efcda311fea38fcd92f61c8ca90811d97f28`.
+
+Package/layout checks do not prove rendered Windows operation. Verify on the user's real Playnite installation before calling the visible placement runtime-tested.
+
 ## Local verification
 
 - `dotnet run --project tests/InstallProgress.Tests/InstallProgress.Tests.csproj -c Release`
 - `dotnet run --project tests/CacheControllers.Tests/CacheControllers.Tests.csproj -c Release`
 - `python -B tools/test-install-progress-theme.py --pwsh <pwsh executable>`
+- `python -B tools/test-daze-progress-theme.py --input <official Daze 2.3.1 .pthm> --pwsh <pwsh executable>`
 - Native transfer regressions in `tests/RcloneTransfers.Tests` plus full .NET Framework 4.8/SDK/WPF/package validation.
 
 State/controller fixtures are explicitly labelled doubles; they do not pretend to be a rendered Playnite UI test. Native rclone checks use disposable local files/endpoints, not the user's real Nextcloud.

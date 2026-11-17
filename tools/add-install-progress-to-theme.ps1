@@ -27,12 +27,32 @@ $buttons = @($document.SelectNodes("//w:Button[@Name='PART_ButtonContextAction' 
 if ($buttons.Count -ne 1) { throw 'Expected one install/context button in this view. No theme changes made.' }
 $row = $buttons[0].ParentNode
 $column = $row.ParentNode
-if ($row.LocalName -ne 'StackPanel' -or $row.GetAttribute('Orientation') -ne 'Horizontal' -or
-    $column.LocalName -ne 'StackPanel' -or $column.GetAttribute('Orientation') -eq 'Horizontal') {
-    throw 'Unsupported button layout: needs a horizontal button row inside a vertical StackPanel. Add the documented host manually; no theme changes made.'
+if ($row.LocalName -ne 'StackPanel' -or $row.GetAttribute('Orientation') -ne 'Horizontal') {
+    throw 'Unsupported button layout: needs one horizontal action row. No theme changes made.'
 }
 $slots = @($document.SelectNodes("//w:ContentControl[@Name='PCLS_InstallProgress' or @x:Name='PCLS_InstallProgress']", $namespaces))
 if ($slots.Count -gt 1) { throw 'Duplicate PCLS install-progress hosts found. No theme changes made.' }
+# Daze's grid overview puts its single action row directly in a Grid. Wrap
+# only that unambiguous row; retain its placement without editing other controls.
+if ($column.LocalName -eq 'Grid' -and $slots.Count -eq 0) {
+    $children = @($column.ChildNodes | Where-Object { $_.NodeType -eq [Xml.XmlNodeType]::Element })
+    if ($children.Count -ne 1 -or $children[0] -ne $row) {
+        throw 'Ambiguous Grid layout: expected only the action row. No theme changes made.'
+    }
+    $wrapper = $document.CreateElement('StackPanel', $presentation)
+    foreach ($property in @('Grid.Row', 'Grid.Column', 'Grid.RowSpan', 'Grid.ColumnSpan', 'Panel.ZIndex')) {
+        if ($row.HasAttribute($property)) {
+            $wrapper.SetAttribute($property, $row.GetAttribute($property))
+            $row.RemoveAttribute($property)
+        }
+    }
+    [void]$column.ReplaceChild($wrapper, $row)
+    [void]$wrapper.AppendChild($row)
+    $column = $wrapper
+}
+if ($column.LocalName -ne 'StackPanel' -or $column.GetAttribute('Orientation') -eq 'Horizontal') {
+    throw 'Unsupported button container. No theme changes made.'
+}
 if ($slots.Count -eq 1) {
     $next = $slots[0].NextSibling
     while ($next -and ($next.NodeType -eq [Xml.XmlNodeType]::Whitespace -or $next.NodeType -eq [Xml.XmlNodeType]::SignificantWhitespace)) { $next = $next.NextSibling }
