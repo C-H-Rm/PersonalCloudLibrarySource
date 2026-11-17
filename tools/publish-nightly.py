@@ -9,7 +9,7 @@ import tempfile
 import zipfile
 from typing import Any
 
-REPOSITORY = 'C-H-Rm/PersonalCloudLibrarySource'
+REPOSITORY = 'C-H-Rm/Cloud-Storage-Integration'
 MARKER = '<!-- pcls-managed-nightly-v1 -->'
 TAG = 'nightly'
 
