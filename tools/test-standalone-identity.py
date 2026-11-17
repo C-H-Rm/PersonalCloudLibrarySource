@@ -32,18 +32,12 @@ class IdentityTests(unittest.TestCase):
         self.assertIn(LEGACY_ID, identity)  # Explicit adoption, never silent ownership alias.
         project = (SOURCE / 'PersonalCloudLibrarySource.csproj').read_text()
         self.assertIn('<AssemblyName>CHRCloudLibrary</AssemblyName>', project)
-        self.assertIn('SourceName = "CHRCL"', (SOURCE / 'InstallProgressView.cs').read_text())
 
     def test_adoption_does_not_rewrite_copied_settings(self):
         source = (SOURCE / 'LegacyMigrationIntegration.cs').read_text()
         callback = source.split('private void LoadCopiedSettings()', 1)[1].split('public override', 1)[0]
         self.assertNotIn('SavePluginSettings', callback)
         self.assertNotIn('copied.LibraryDisplayName =', callback)
-
-    def test_theme_targets_only_the_standalone_provider(self):
-        packer = (ROOT / 'tools/prepare-daze-progress-theme.py').read_text()
-        self.assertIn("'-SourceName', 'CHRCL'", packer)
-        self.assertIn("'Version': '2.3.1.3'", packer)
 
     def test_built_payload_is_the_standalone_assembly_and_manifest(self):
         if not PACKAGE:

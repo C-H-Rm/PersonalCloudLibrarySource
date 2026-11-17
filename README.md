@@ -1,6 +1,6 @@
 # CHR Cloud Library
 
-This fork is a standalone Playnite extension, based on Personal Cloud Library Source by The Bearclaw and ztwslayer. It has its own add-on UUID, assembly and theme-control namespace; upstream updates do not replace it. See [download center and migration](docs/download-center-and-migration.md) before switching an existing library.
+This fork is a standalone Playnite extension, based on Personal Cloud Library Source by The Bearclaw and ztwslayer. It has its own add-on UUID and assembly; upstream updates do not replace it. See [download center and migration](docs/download-center-and-migration.md) before switching an existing library.
 
 ## How This Works
 
@@ -59,8 +59,7 @@ Install **CHR Cloud Library** from its standalone `.pext`, not the upstream add-
 1. If switching from the original extension, finish any transfers and disable it in Add-ons, then restart. Keep its data and library entries for adoption.
 2. Open `CHRCloudLibrary-<version>.pext` with Playnite and restart when prompted.
 3. Choose the explicit legacy-adoption prompt to keep existing settings and game records, or set up a separate fresh library. See the migration guide below; do not delete and reimport the old games.
-4. For inline Daze progress, install the matching **Daze - Cloud Progress** theme version 2.3.1.3 or newer. Its independent `CHRCL_InstallProgress` host replaces the earlier test-build provider. The top-panel download center does not require the custom theme.
-5. For a fresh setup, select a provider in the plugin settings and run **Update Game Library**.
+4. For a fresh setup, select a provider in the plugin settings and run **Update Game Library**.
 
 ![Provider settings example](docs/images/pcls-settings-provider.png)
 

@@ -140,7 +140,7 @@ class Program
             Check(completed == context.Owner && f.Game.IsInstalled && f.Game.GameActions.Count == 1, "wrong install completion");
             Check(f.Game.GameActions[0].Path == f.Item.Launch, "wrong launch action");
         });
-        Test("install publishes per-game inline progress and removes it after success", () =>
+        Test("install publishes shared per-game download progress and removes it after success", () =>
         {
             using var f = new Fixture();
             f.Game.IsInstalled = false; File.Delete(f.Item.Launch);
@@ -156,7 +156,7 @@ class Program
                 Check(entered.Wait(2000), "download fixture did not start");
                 var status = InstallProgressState.Shared.Get(f.Game.Id);
                 Check(status != null && status.Active && status.Percentage == 50 && status.TotalBytes == 100 && status.BytesPerSecond == 25,
-                    "inline progress did not receive the exact fixture telemetry");
+                    "shared progress state did not receive the exact fixture telemetry");
             } finally { release.Set(); }
             context.Until(() => !f.Game.IsInstalling);
             Check(f.Game.IsInstalled && InstallProgressState.Shared.Get(f.Game.Id) == null, "successful progress did not disappear");

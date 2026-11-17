@@ -17,11 +17,6 @@ on:
       - tools/test-standalone-identity.py
       - tests/InstallModRestoration.Tests/**
       - tests/PostInstallModSyncQueue.Tests/**
-      - tools/add-install-progress-to-theme.ps1
-      - tools/test-install-progress-theme.py
-      - tools/prepare-daze-progress-theme.py
-      - tools/test-daze-progress-theme.py
-      - tools/theme-support/**
       - tools/package-extension.ps1
       - tools/verify-package.ps1
       - tools/test-package-extension.ps1
@@ -45,11 +40,6 @@ on:
       - tools/test-standalone-identity.py
       - tests/InstallModRestoration.Tests/**
       - tests/PostInstallModSyncQueue.Tests/**
-      - tools/add-install-progress-to-theme.ps1
-      - tools/test-install-progress-theme.py
-      - tools/prepare-daze-progress-theme.py
-      - tools/test-daze-progress-theme.py
-      - tools/theme-support/**
       - tools/package-extension.ps1
       - tools/verify-package.ps1
       - tools/test-package-extension.ps1
@@ -98,19 +88,8 @@ jobs:
       - name: Test nightly publication guards without network access
         run: python -B tools/test-nightly-release.py
 
-      - name: Test inline installation state and safe theme integration
-        run: |
-          dotnet run --project tests/InstallProgress.Tests/InstallProgress.Tests.csproj --configuration Release
-          if ($LASTEXITCODE -ne 0) { throw 'Inline progress state tests failed.' }
-          python -B tools/test-install-progress-theme.py --pwsh (Get-Command pwsh).Source
-          if ($LASTEXITCODE -ne 0) { throw 'Theme integration tests failed.' }
-
-      - name: Test installable Daze theme copy from pinned upstream package
-        run: |
-          $source = Join-Path $env:RUNNER_TEMP 'Daze-2.3.1.pthm'
-          Invoke-WebRequest 'https://github.com/dariolupo/Daze_Theme/releases/download/v2.3.1/Daze_27790ca9-d3a4-480f-bffe-914ec6768363_2_3_1.pthm' -OutFile $source
-          python -B tools/test-daze-progress-theme.py --input $source --pwsh (Get-Command pwsh).Source
-          if ($LASTEXITCODE -ne 0) { throw 'Daze package integration tests failed.' }
+      - name: Test shared download progress state
+        run: dotnet run --project tests/InstallProgress.Tests/InstallProgress.Tests.csproj --configuration Release
 
       - name: Test download history and standalone migration
         run: |

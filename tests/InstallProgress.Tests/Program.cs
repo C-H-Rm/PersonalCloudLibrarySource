@@ -24,7 +24,7 @@ var prior = state.Get(game);
 first.Report("Downloading", 20, 100, 20, 20);
 Check(prior.CompletedBytes == 10 && state.Get(game).CompletedBytes == 20, "published snapshots are not mutated by later updates");
 first.Finish("Complete");
-Check(state.Get(game) == null, "completed installation removes its inline status");
+Check(state.Get(game) == null, "completed installation removes its shared progress state");
 Check(state.TryBegin(game, out var second), "a later install can start normally");
 first.Report("Failed", message: "stale callback");
 Check(state.Get(game).OperationId == second.OperationId && state.Get(game).Phase == "Inventory", "late callback cannot overwrite a new installation");

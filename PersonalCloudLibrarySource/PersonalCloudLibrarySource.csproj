@@ -52,7 +52,6 @@
   <ItemGroup>
     <Compile Include="LocalFileCopier.cs" />
     <Compile Include="InstallProgressState.cs" />
-    <Compile Include="InstallProgressView.cs" />
     <Compile Include="DownloadHistory.cs" />
     <Compile Include="DownloadCenter.cs" />
     <Compile Include="ForkIdentity.cs" />
