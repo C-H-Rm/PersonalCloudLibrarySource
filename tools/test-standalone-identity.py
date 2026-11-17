@@ -8,7 +8,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / 'PersonalCloudLibrarySource'
 NEW_ID = '402561c2-ea33-4c60-a8f8-ec25e997a1d5'
-ADDON_ID = 'CHRCloudLibrary_' + NEW_ID
+ADDON_ID = 'CloudStorageIntegration_' + NEW_ID
 LEGACY_ID = '61993828-67a8-4468-93a2-293442e36328'
 PACKAGE = None
 
@@ -18,7 +18,7 @@ class IdentityTests(unittest.TestCase):
         manifest = (SOURCE / 'extension.yaml').read_text()
         self.assertRegex(manifest, r'(?m)^Id: ' + re.escape(ADDON_ID) + '$')
         self.assertRegex(manifest, r'(?m)^Name: Cloud Storage Integration$')
-        self.assertRegex(manifest, r'(?m)^Module: CHRCloudLibrary.dll$')
+        self.assertRegex(manifest, r'(?m)^Module: CloudStorageIntegration.dll$')
         self.assertNotIn(LEGACY_ID, manifest)
         self.assertNotIn('github.com/KurtusCobain/', manifest)
         self.assertIn('github.com/C-H-Rm/PersonalCloudLibrarySource', manifest)
@@ -31,7 +31,7 @@ class IdentityTests(unittest.TestCase):
         self.assertIn(NEW_ID, identity)
         self.assertIn(LEGACY_ID, identity)  # Explicit adoption, never silent ownership alias.
         project = (SOURCE / 'PersonalCloudLibrarySource.csproj').read_text()
-        self.assertIn('<AssemblyName>CHRCloudLibrary</AssemblyName>', project)
+        self.assertIn('<AssemblyName>CloudStorageIntegration</AssemblyName>', project)
 
     def test_adoption_does_not_rewrite_copied_settings(self):
         source = (SOURCE / 'LegacyMigrationIntegration.cs').read_text()
@@ -44,11 +44,11 @@ class IdentityTests(unittest.TestCase):
             self.skipTest('Pass --package after the full SDK/WPF rebuild.')
         with zipfile.ZipFile(PACKAGE) as archive:
             self.assertEqual(set(archive.namelist()), {
-                'CHRCloudLibrary.dll', 'extension.yaml', 'icon.png', 'Localization/en_US.xaml'})
+                'CloudStorageIntegration.dll', 'extension.yaml', 'icon.png', 'Localization/en_US.xaml'})
             self.assertIsNone(archive.testzip())
             self.assertIn('Id: ' + ADDON_ID, archive.read('extension.yaml').decode('utf-8-sig'))
-            self.assertEqual(archive.read('CHRCloudLibrary.dll'),
-                             (SOURCE / 'bin/Release/CHRCloudLibrary.dll').read_bytes())
+            self.assertEqual(archive.read('CloudStorageIntegration.dll'),
+                             (SOURCE / 'bin/Release/CloudStorageIntegration.dll').read_bytes())
 
 
 if __name__ == '__main__':

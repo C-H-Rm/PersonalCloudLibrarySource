@@ -5,11 +5,11 @@ using System.Runtime.InteropServices;
 // General Information about an assembly is controlled through the following
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
-[assembly: AssemblyTitle("CHR Cloud Library")]
+[assembly: AssemblyTitle("Cloud Storage Integration")]
 [assembly: AssemblyDescription("Personal cloud games, mod synchronization and download history")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("")]
-[assembly: AssemblyProduct("CHR Cloud Library")]
+[assembly: AssemblyProduct("Cloud Storage Integration")]
 [assembly: AssemblyCopyright("Copyright ©  2019")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]

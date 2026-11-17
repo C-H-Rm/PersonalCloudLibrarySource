@@ -865,7 +865,7 @@ namespace PersonalCloudLibrarySource
 
             return Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "CHRCloudLibrary");
+                "CloudStorageIntegration");
         }
 
         private string ResolveDiagnosticsDirectory()
@@ -880,7 +880,7 @@ namespace PersonalCloudLibrarySource
             }
 
             var localApplicationData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            return Path.Combine(localApplicationData, "CHRCloudLibrary", "diagnostics");
+            return Path.Combine(localApplicationData, "CloudStorageIntegration", "diagnostics");
         }
 
         public override ISettings GetSettings(bool firstRunSettings)

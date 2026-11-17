@@ -48,7 +48,7 @@ It only catalogs user-supplied manifest entries and copies or downloads user-own
 
 ## Nightly builds of this fork
 
-The standalone version described here is a private candidate until explicitly published. Existing **[Releases → Nightly](https://github.com/C-H-Rm/PersonalCloudLibrarySource/releases/tag/nightly)** assets may still use the legacy identity; check the package's name and release notes before switching. The official add-on browser installs upstream, not CHR Cloud Library.
+The standalone version described here is a private candidate until explicitly published. Existing **[Releases → Nightly](https://github.com/C-H-Rm/PersonalCloudLibrarySource/releases/tag/nightly)** assets may still use the legacy identity; check the package's name and release notes before switching. Playnite's official add-on browser installs the upstream extension; use this repository's standalone package for this fork.
 
 The existing verified Windows build updates this single prerelease after successful builds of `main` (including manual runs on `main`). Pull requests and failed builds cannot publish. The release includes the installable package, SHA-256 checksum and source build receipt. Release downloads do not have the Actions artifact retention deadline. Stable releases are not changed; this is not an automatic Playnite add-on update channel.
 

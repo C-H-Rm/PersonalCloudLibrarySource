@@ -4,9 +4,9 @@
 
 **Cloud Storage Integration** is a separate build from the upstream add-on:
 
-- Add-on ID: `CHRCloudLibrary_402561c2-ea33-4c60-a8f8-ec25e997a1d5`.
+- Add-on ID: `CloudStorageIntegration_402561c2-ea33-4c60-a8f8-ec25e997a1d5`.
 - Runtime plugin ID: `402561c2-ea33-4c60-a8f8-ec25e997a1d5`.
-- Assembly/module: `CHRCloudLibrary.dll`. The source namespace is retained, not its old CLR assembly identity.
+- Assembly/module: `CloudStorageIntegration.dll`. The source namespace is retained, not its old CLR assembly identity.
 
 - Own data directory under Playnite's extension-data root, keyed by the new runtime UUID.
 
@@ -17,7 +17,7 @@ Adoption preserves the copied configuration bytes and last-write time. The histo
 ## Switching an existing library
 
 1. Finish downloads, stop running cloud games, and disable the original **Personal Cloud Library Source** extension. Restart Playnite. Do not delete its games or data.
-2. Install the standalone `CHRCloudLibrary-0.2.0.pext`; restart as requested.
+2. Install the standalone `CloudStorageIntegration-0.2.0.pext`; restart as requested.
 3. Use the explicit adoption prompt to copy settings and safety state and transfer ownership of existing game records. Their Playnite database IDs must be preserved: do not delete/reimport them. A separate fresh setup is also possible; it is not implicit migration.
 4. Check existing games, settings and cached installation paths before removing the disabled old extension. Keep the original data for rollback.
 

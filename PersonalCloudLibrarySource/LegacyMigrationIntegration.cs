@@ -72,7 +72,7 @@ namespace PersonalCloudLibrarySource
             if (IsLegacyPluginEnabled())
             {
                 playniteApi.Dialogs.ShowMessage(
-                    "CHR Cloud Library found games or data from Personal Cloud Library Source, which is still enabled. Disable or remove the old extension, restart Playnite, then retry this decision. The old extension's files and settings have not been changed.",
+                    "Cloud Storage Integration found games or data from Personal Cloud Library Source, which is still enabled. Disable or remove the old extension, restart Playnite, then retry this decision. The old extension's files and settings have not been changed.",
                     ForkIdentity.DisplayName, MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
@@ -173,8 +173,8 @@ namespace PersonalCloudLibrarySource
             {
                 new MainMenuItem
                 {
-                    Description = "Retry CHR Cloud Library adoption",
-                    MenuSection = "CHR Cloud Library",
+                    Description = "Retry Cloud Storage Integration adoption",
+                    MenuSection = "Cloud Storage Integration",
                     Action = _ => PromptLegacyMigration()
                 }
             };
