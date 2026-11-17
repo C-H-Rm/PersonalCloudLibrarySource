@@ -17,7 +17,7 @@ class IdentityTests(unittest.TestCase):
     def test_distinct_public_identity_module_and_fork_links(self):
         manifest = (SOURCE / 'extension.yaml').read_text()
         self.assertRegex(manifest, r'(?m)^Id: ' + re.escape(ADDON_ID) + '$')
-        self.assertRegex(manifest, r'(?m)^Name: Personal Cloud Library Source \(Standalone\)$')
+        self.assertRegex(manifest, r'(?m)^Name: Cloud Storage Integration$')
         self.assertRegex(manifest, r'(?m)^Module: CHRCloudLibrary.dll$')
         self.assertNotIn(LEGACY_ID, manifest)
         self.assertNotIn('github.com/KurtusCobain/', manifest)

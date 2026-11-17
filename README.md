@@ -1,4 +1,4 @@
-# Personal Cloud Library Source (Standalone)
+# Cloud Storage Integration
 
 This fork is a standalone Playnite extension, based on Personal Cloud Library Source by The Bearclaw and ztwslayer. It has its own add-on UUID and assembly; upstream updates do not replace it. See [download center and migration](docs/download-center-and-migration.md) before switching an existing library.
 
@@ -54,7 +54,7 @@ The existing verified Windows build updates this single prerelease after success
 
 ## Installation for Users
 
-Install **Personal Cloud Library Source (Standalone)** from its standalone `.pext`, not the upstream add-on-browser listing.
+Install **Cloud Storage Integration** from its standalone `.pext`, not the upstream add-on-browser listing.
 
 1. If switching from the original extension, finish any transfers and disable it in Add-ons, then restart. Keep its data and library entries for adoption.
 2. Open the standalone `.pext` with Playnite and restart when prompted.

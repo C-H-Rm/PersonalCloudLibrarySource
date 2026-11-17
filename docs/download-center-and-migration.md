@@ -2,7 +2,7 @@
 
 ## Standalone identity
 
-**Personal Cloud Library Source (Standalone)** is a separate build from the upstream add-on:
+**Cloud Storage Integration** is a separate build from the upstream add-on:
 
 - Add-on ID: `CHRCloudLibrary_402561c2-ea33-4c60-a8f8-ec25e997a1d5`.
 - Runtime plugin ID: `402561c2-ea33-4c60-a8f8-ec25e997a1d5`.

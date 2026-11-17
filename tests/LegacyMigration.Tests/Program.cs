@@ -40,7 +40,7 @@ void Seed(string source, string destination, bool settings = true, bool manifest
 }
 
 LegacyGameOwnership NewLegacy() => new LegacyGameOwnership { GameId = "a", PluginId = ForkIdentity.LegacyPluginId };
-Check(ForkIdentity.PluginId == Guid.Parse("402561c2-ea33-4c60-a8f8-ec25e997a1d5") && ForkIdentity.LegacyPluginId == Guid.Parse("61993828-67a8-4468-93a2-293442e36328") && ForkIdentity.DisplayName == "Personal Cloud Library Source (Standalone)" && ForkIdentity.ExtensionYamlId == "CHRCloudLibrary_402561c2-ea33-4c60-a8f8-ec25e997a1d5", "fork and legacy identities match the wiring contract");
+Check(ForkIdentity.PluginId == Guid.Parse("402561c2-ea33-4c60-a8f8-ec25e997a1d5") && ForkIdentity.LegacyPluginId == Guid.Parse("61993828-67a8-4468-93a2-293442e36328") && ForkIdentity.DisplayName == "Cloud Storage Integration" && ForkIdentity.ExtensionYamlId == "CHRCloudLibrary_402561c2-ea33-4c60-a8f8-ec25e997a1d5", "fork and legacy identities match the wiring contract");
 {
     var root = Root(); var source = Path.Combine(root, "old"); var destination = Path.Combine(root, "new"); Seed(source, destination);
     var (games, update) = Owners(NewLegacy());

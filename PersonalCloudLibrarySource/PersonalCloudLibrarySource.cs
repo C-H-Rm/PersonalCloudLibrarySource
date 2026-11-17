@@ -41,7 +41,7 @@ namespace PersonalCloudLibrarySource
             var importedGames = new List<GameMetadata>();
             if (!CanUseForkLibrary)
             {
-                logger.Info("Personal Cloud Library Source is waiting for the legacy-adoption or separate-setup decision.");
+                logger.Info("Cloud Storage Integration is waiting for the legacy-adoption or separate-setup decision.");
                 return importedGames;
             }
             var diagnostics = new List<string>();
