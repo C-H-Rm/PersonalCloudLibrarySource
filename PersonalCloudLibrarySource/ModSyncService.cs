@@ -4,6 +4,11 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
+using System.Diagnostics;
+using System.Runtime.Serialization;
+using System.Runtime.Serialization.Json;
+using System.Threading.Tasks;
 
 namespace PersonalCloudLibrarySource
 {
@@ -16,6 +21,20 @@ namespace PersonalCloudLibrarySource
         public string StateDirectory { get; set; }
         public string RcloneExecutable { get; set; } = "rclone";
         public int TimeoutSeconds { get; set; } = 1800;
+        public CancellationToken CancellationToken { get; set; }
+        public Action<ModSyncProgress> Progress { get; set; }
+        public string DownloadCompareDirectory { get; set; }
+    }
+
+    public sealed class ModSyncProgress
+    {
+        public string Phase { get; set; }
+        public long Bytes { get; set; }
+        public long TotalBytes { get; set; }
+        public long Checks { get; set; }
+        public long TotalChecks { get; set; }
+        public double BytesPerSecond { get; set; }
+        public double? Percentage { get; set; }
     }
 
     public sealed class ModSyncResult
@@ -23,6 +42,9 @@ namespace PersonalCloudLibrarySource
         public bool Success { get; set; }
         public bool HasConflicts { get; set; }
         public string Message { get; set; }
+        public bool Cancelled { get; set; }
+        public bool RequiresRelink { get; set; }
+        public string DiagnosticPath { get; set; }
     }
 
     public sealed class ModSyncService
@@ -31,11 +53,13 @@ namespace PersonalCloudLibrarySource
 
         public ModSyncResult Synchronize(ModSyncRequest request, Func<string, bool> confirm)
         {
+            string diagnostic = null;
             try
             {
                 Validate(request);
+                request.CancellationToken.ThrowIfCancellationRequested();
                 Directory.CreateDirectory(request.StateDirectory);
-                // Outside the game/cache; serializes even separate plugin instances.
+                diagnostic = DiagnosticPath(request);
                 using (new FileStream(request.StateDirectory + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
                 {
                     return SynchronizeLocked(request, confirm ?? (_ => false));
@@ -43,14 +67,19 @@ namespace PersonalCloudLibrarySource
             }
             catch (Exception ex)
             {
-                return new ModSyncResult { Success = false, Message = ex.Message };
+                var cancelled = ex is OperationCanceledException || (request != null && request.CancellationToken.IsCancellationRequested);
+                var relink = request != null && (File.Exists(Path.Combine(request.StateDirectory ?? "", "paused")) ||
+                    (File.Exists(Path.Combine(request.StateDirectory ?? "", "pair.txt")) && !File.Exists(Path.Combine(request.StateDirectory ?? "", "ready"))));
+                if (!string.IsNullOrEmpty(diagnostic)) AppendDiagnostic(diagnostic, "operation", ex.ToString());
+                return new ModSyncResult { Success = false, Cancelled = cancelled, RequiresRelink = relink, DiagnosticPath = diagnostic,
+                    Message = cancelled ? "Mod sync cancelled. No automatic resync was attempted." : ex.Message };
             }
         }
 
-        private ModSyncResult SynchronizeLocked(ModSyncRequest r, Func<string, bool> confirm)
+        private ModSyncResult SynchronizeLocked(ModSyncRequest r, Func<string, bool> confirm, bool restoreAfterInstall = false)
         {
             if (File.Exists(Path.Combine(r.StateDirectory, "paused")))
-                throw new InvalidOperationException("Mod sync is paused after uninstall. Use 'Relink mods after reinstall' to restore and explicitly establish a new baseline.");
+                throw new InvalidOperationException("Mod sync is paused after uninstall. Use Sync mods to review recovery, or Recover or relink mods, to explicitly establish a new baseline.");
             var pairFile = Path.Combine(r.StateDirectory, "pair.txt");
             var readyFile = Path.Combine(r.StateDirectory, "ready");
             var markerName = ".pcls-modsync-" + Key(r.GameId).Substring(0, 16);
@@ -79,13 +108,17 @@ namespace PersonalCloudLibrarySource
 
             if (!initialized)
             {
-                if (!confirm("Link this mod folder for two-way sync, including deletions?\n\nLocal: " + r.LocalFolder + "\nCloud: " + r.RemoteFolder + "\n\nExisting files will be merged. Conflicting initial files must be resolved first."))
-                    return Declined();
+                if (!restoreAfterInstall && !confirm("Link this mod folder for two-way sync, including deletions?\n\nLocal: " + r.LocalFolder + "\nCloud: " + r.RemoteFolder + "\n\nExisting files will be merged. Conflicting initial files must be resolved first."))
+                    return Declined(r);
                 Require(r, "mkdir", r.RemoteFolder);
-                // --download compares actual content, not just equal-sized binaries.
-                var checkPath = Path.Combine(r.StateDirectory, "initial-check.txt");
-                var check = Run(r, "check", r.LocalFolder, r.RemoteFolder, "--download", "--combined", checkPath);
-                var report = File.Exists(checkPath) ? File.ReadAllLines(checkPath) : new string[0];
+                // Compare each overlapping object using a hash explicitly present on both objects.
+                // If even one shared object lacks a compatible native hash, use byte-content checking.
+                var check = CompareInitialContents(r, Path.Combine(r.StateDirectory, "initial-check.txt"));
+                var report = File.Exists(Path.Combine(r.StateDirectory, "initial-check.txt"))
+                    ? File.ReadAllLines(Path.Combine(r.StateDirectory, "initial-check.txt")) : new string[0];
+                var caseCollision = FindWindowsCaseCollision(report.Where(line => line.Length > 2).Select(line => line.Substring(2)));
+                if (caseCollision != null)
+                    throw new InvalidOperationException("Initial mod names collide on a Windows destination. Rename the conflicting files before linking: " + caseCollision);
                 if (report.Any(line => line.StartsWith("* ") || line.StartsWith("! ")) ||
                     (check.ExitCode != 0 && !report.Any(line => line.StartsWith("+ ") || line.StartsWith("- "))))
                     throw new InvalidOperationException("Initial mod folders contain conflicting or unreadable files. Neither copy was overwritten. Resolve the differences, then link again.\n" + check.Log);
@@ -110,7 +143,7 @@ namespace PersonalCloudLibrarySource
             if (initialized && ((localCount == 0 && remoteCount > 0) || (remoteCount == 0 && localCount > 0)))
             {
                 if (!confirm("One tracked mod folder is now empty. Synchronization may remove all remaining mods on the other side. Continue?\n\nLocal: " + r.LocalFolder + "\nCloud: " + r.RemoteFolder))
-                    return Declined();
+                    return Declined(r);
             }
 
             var arguments = new List<string>
@@ -119,7 +152,8 @@ namespace PersonalCloudLibrarySource
                 "--workdir", workDirectory, "--check-access", "--check-filename", markerName,
                 "--compare", "size,modtime,checksum", "--download-hash",
                 "--conflict-resolve", "none", "--conflict-loser", "num", "--conflict-suffix", "pcls-conflict",
-                "--max-delete", "100", "--resilient", "--recover", "--verbose"
+                "--max-delete", "100", "--resilient", "--recover", "--verbose",
+                "--use-json-log", "--stats=1s", "--stats-log-level", "NOTICE"
             };
             if (!initialized) arguments.Add("--resync");
             var sync = Run(r, arguments.ToArray());
@@ -132,13 +166,138 @@ namespace PersonalCloudLibrarySource
             return new ModSyncResult
             {
                 Success = true, HasConflicts = conflicts,
+                DiagnosticPath = DiagnosticPath(r),
                 Message = conflicts ? "Mods synchronized; conflicting versions were kept with pcls-conflict suffixes. Review them before playing." : "Mods synchronized."
             };
         }
 
+        [DataContract]
+        private sealed class RcloneListedFile
+        {
+            [DataMember(Name = "Path")] public string Path { get; set; }
+            [DataMember(Name = "Name")] public string Name { get; set; }
+            [DataMember(Name = "Hashes")] public Dictionary<string, string> Hashes { get; set; }
+            [DataMember(Name = "Size")] public long? Size { get; set; }
+        }
+
+        private ModSyncCommandResult CompareInitialContents(ModSyncRequest r, string reportPath)
+        {
+            var local = RunPhase(r, "check", "lsjson", r.LocalFolder, "--recursive", "--files-only", "--hash");
+            var remote = RunPhase(r, "check", "lsjson", r.RemoteFolder, "--recursive", "--files-only", "--hash");
+            if (local.ExitCode == 0 && remote.ExitCode == 0)
+            {
+                try
+                {
+                    var localFiles = DeserializeListedFiles(local.Output);
+                    var remoteFiles = DeserializeListedFiles(remote.Output);
+                    var caseCollision = FindWindowsCaseCollision(localFiles.Concat(remoteFiles).Select(f => f.Path ?? f.Name));
+                    if (caseCollision != null)
+                    {
+                        File.WriteAllLines(reportPath, new[] { "* " + caseCollision });
+                        AppendDiagnostic(DiagnosticPath(r), "initial-check", "mode=refused-case-collision " + caseCollision);
+                        return new ModSyncCommandResult { ExitCode = 1,
+                            Error = "Initial mod names collide on a Windows destination. Rename them before linking: " + caseCollision };
+                    }
+                    var left = localFiles.ToDictionary(f => f.Path ?? f.Name, StringComparer.Ordinal);
+                    var right = remoteFiles.ToDictionary(f => f.Path ?? f.Name, StringComparer.Ordinal);
+                    var shared = left.Keys.Intersect(right.Keys, StringComparer.Ordinal).ToArray();
+                    var comparisons = new List<Tuple<string, bool>>();
+                    var allUsable = true;
+                    foreach (var path in shared)
+                    {
+                        var localHashes = left[path].Hashes ?? new Dictionary<string, string>();
+                        var remoteHashes = right[path].Hashes ?? new Dictionary<string, string>();
+                        var compatible = new[] { "sha1", "md5" }.FirstOrDefault(type =>
+                            localHashes.ContainsKey(type) && remoteHashes.ContainsKey(type) &&
+                            !string.IsNullOrWhiteSpace(localHashes[type]) && !string.IsNullOrWhiteSpace(remoteHashes[type]));
+                        if (compatible == null) { allUsable = false; break; }
+                        comparisons.Add(Tuple.Create(path, string.Equals(localHashes[compatible], remoteHashes[compatible], StringComparison.OrdinalIgnoreCase)));
+                    }
+                    if (allUsable)
+                    {
+                        var lines = new List<string>();
+                        foreach (var path in left.Keys.Except(right.Keys, StringComparer.Ordinal)) lines.Add("+ " + path);
+                        foreach (var path in right.Keys.Except(left.Keys, StringComparer.Ordinal)) lines.Add("- " + path);
+                        foreach (var item in comparisons.Where(item => !item.Item2)) lines.Add("* " + item.Item1);
+                        File.WriteAllLines(reportPath, lines);
+                        AppendDiagnostic(DiagnosticPath(r), "initial-check", "mode=native-per-object phase=verified-hashes shared=" + shared.Length + " differences=" + comparisons.Count(item => !item.Item2));
+                        return new ModSyncCommandResult { ExitCode = comparisons.Any(item => !item.Item2) ? 1 : 0,
+                            Output = string.Join("\n", lines), Error = "Initial comparison used explicit per-object SHA-1/MD5 hashes." };
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppendDiagnostic(DiagnosticPath(r), "initial-check", "mode=download-fallback reason=native hash listing could not be verified: " + ex.Message);
+                }
+            }
+            else AppendDiagnostic(DiagnosticPath(r), "initial-check", "mode=download-fallback reason=lsjson failed");
+
+            AppendDiagnostic(DiagnosticPath(r), "initial-check", "mode=download-fallback phase=content-check");
+            return Run(r, "check", r.LocalFolder, r.RemoteFolder, "--download", "--combined", reportPath,
+                "--use-json-log", "--stats=1s", "--stats-log-level", "NOTICE");
+        }
+
+        private static string FindWindowsCaseCollision(IEnumerable<string> paths)
+        {
+            var spellings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var path in paths)
+            {
+                if (spellings.TryGetValue(path, out var previous) && !string.Equals(previous, path, StringComparison.Ordinal))
+                    return previous + " / " + path;
+                spellings[path] = path;
+            }
+            return null;
+        }
+
+        private static List<RcloneListedFile> DeserializeListedFiles(string json)
+        {
+            var serializer = new DataContractJsonSerializer(typeof(List<RcloneListedFile>),
+                new DataContractJsonSerializerSettings { UseSimpleDictionaryFormat = true });
+            using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(json ?? "[]")))
+                return (List<RcloneListedFile>)serializer.ReadObject(stream);
+        }
+
         private ModSyncCommandResult Run(ModSyncRequest r, params string[] arguments)
         {
-            return process.Run(r.RcloneExecutable, r.TimeoutSeconds, arguments);
+            var phase = arguments.Length == 0 ? "command" : arguments[0];
+            if (phase == "bisync" && arguments.Contains("--help")) phase = "compatibility";
+            return RunPhase(r, phase, arguments);
+        }
+
+        private ModSyncCommandResult RunPhase(ModSyncRequest r, string phase, params string[] arguments)
+        {
+            var timer = Stopwatch.StartNew();
+            try
+            {
+                var result = process.RunCore(r.RcloneExecutable, r.TimeoutSeconds, r.CancellationToken, r.Progress, phase, arguments);
+                AppendDiagnostic(DiagnosticPath(r), phase, "elapsed_ms=" + timer.ElapsedMilliseconds + "\n" + result.Log + (result.Cancelled ? "\nCANCELLED" : ""));
+                if (result.Cancelled) throw new OperationCanceledException(r.CancellationToken);
+                return result;
+            }
+            catch (ModSyncTimeoutException ex) { AppendDiagnostic(DiagnosticPath(r), phase, "elapsed_ms=" + timer.ElapsedMilliseconds + "\n" + ex.Log + "\nTIMEOUT " + ex.Message); throw; }
+            catch (ModSyncCallbackException ex) { AppendDiagnostic(DiagnosticPath(r), phase, "elapsed_ms=" + timer.ElapsedMilliseconds + "\n" + ex.Log + "\nCALLBACK ERROR " + ex.InnerException); throw; }
+        }
+
+        private static string DiagnosticPath(ModSyncRequest r) => r == null || string.IsNullOrWhiteSpace(r.StateDirectory)
+            ? null : Path.Combine(r.StateDirectory, "diagnostics.log");
+
+        private static void AppendDiagnostic(string path, string phase, string text)
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                // Retain a bounded current log and one previous log, never pairing/baseline state.
+                if (File.Exists(path) && new FileInfo(path).Length > 4 * 1024 * 1024)
+                {
+                    File.Copy(path, path + ".previous", true);
+                    File.WriteAllText(path, "Previous diagnostics retained in diagnostics.log.previous\n");
+                }
+                text = text ?? "";
+                if (text.Length > 262144) text = "[earlier command output omitted]\n" + text.Substring(text.Length - 262144);
+                File.AppendAllText(path, "\n=== " + DateTime.UtcNow.ToString("O") + " phase=" + phase + " ===\n" + (text ?? "") + "\n");
+            }
+            catch { /* Diagnostics must not mask the original sync outcome. */ }
         }
 
         private ModSyncCommandResult Require(ModSyncRequest r, params string[] arguments)
@@ -147,6 +306,324 @@ namespace PersonalCloudLibrarySource
             if (result.ExitCode != 0)
                 throw new InvalidOperationException("rclone " + arguments[0] + " failed (" + result.ExitCode + "). No deletion sync will follow.\n" + result.Log);
             return result;
+        }
+
+        /// <summary>Downloads cloud mods missing from the installed local folder without initializing or changing a pairing.</summary>
+        public ModSyncResult DownloadAfterInstall(ModSyncRequest request, Func<ModSyncRequest, ModSyncResult> download)
+        {
+            string diagnostic = null;
+            var validated = false;
+            string stage = null;
+            try
+            {
+                Validate(request);
+                if (IsWithin(request.StateDirectory, Path.GetDirectoryName(Path.GetFullPath(request.LaunchFile))))
+                    throw new InvalidOperationException("Install mod state must be outside the game installation.");
+                if (download == null) throw new InvalidOperationException("Install mod download callback is required.");
+                validated = true;
+                request.CancellationToken.ThrowIfCancellationRequested();
+                RejectReparsePoints(request.LocalFolder);
+                RejectReparsePoints(request.StateDirectory);
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(request.StateDirectory)));
+                using (new FileStream(request.StateDirectory + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+                {
+                    RejectReparsePoints(request.LocalFolder);
+                    RejectReparsePoints(request.StateDirectory);
+                    var pairFile = Path.Combine(request.StateDirectory, "pair.txt");
+                    var readyFile = Path.Combine(request.StateDirectory, "ready");
+                    var identity = Path.GetFullPath(request.LocalFolder) + "\n" + request.RemoteFolder;
+                    var hasPair = File.Exists(pairFile);
+                    var completedPair = hasPair && File.Exists(readyFile);
+                    if (hasPair && !string.Equals(File.ReadAllText(pairFile), identity, StringComparison.Ordinal))
+                        throw new InvalidOperationException("Mod sync mapping changed. Restore the exact previous paths before downloading mods.");
+                    Directory.CreateDirectory(request.LocalFolder);
+                    Directory.CreateDirectory(request.StateDirectory);
+                    diagnostic = DiagnosticPath(request);
+                    stage = GetInstallStagePath(request);
+                    PrepareInstallStage(stage, request.GameId + "\n" + identity);
+                    if (completedPair && !File.Exists(Path.Combine(request.StateDirectory, "paused")))
+                        File.WriteAllText(Path.Combine(request.StateDirectory, "paused"), "Reinstalled: install-only mod download; resume background sync explicitly.");
+                    using (var operation = CancellationTokenSource.CreateLinkedTokenSource(request.CancellationToken))
+                    {
+                        var listingRequest = CloneRequest(request, operation.Token);
+                        listingRequest.Progress = null;
+                        var stagedRequest = CloneRequest(request, operation.Token);
+                        stagedRequest.LocalFolder = stage;
+                        stagedRequest.DownloadCompareDirectory = Path.GetFullPath(request.LocalFolder);
+                        stagedRequest.Progress = request.Progress;
+                        var listingTask = Task.Run(() => RunPhase(listingRequest, "install-inventory", "lsjson",
+                            request.RemoteFolder, "--recursive", "--files-only"));
+                        var downloadTask = Task.Run(() => download(stagedRequest));
+                        try
+                        {
+                            var pending = new List<Task> { listingTask, downloadTask };
+                            while (pending.Count != 0)
+                            {
+                                var completed = Task.WhenAny(pending).GetAwaiter().GetResult();
+                                pending.Remove(completed);
+                                if (completed == downloadTask && downloadTask.Status == TaskStatus.RanToCompletion &&
+                                    downloadTask.Result?.Success == true && !listingTask.IsCompleted)
+                                    request.Progress?.Invoke(new ModSyncProgress { Phase = "Validating downloaded mod names" });
+                                if (completed.IsFaulted || completed.IsCanceled ||
+                                    (completed == listingTask && listingTask.Status == TaskStatus.RanToCompletion && listingTask.Result.ExitCode != 0) ||
+                                    (completed == downloadTask && downloadTask.Status == TaskStatus.RanToCompletion &&
+                                     (downloadTask.Result == null || !downloadTask.Result.Success)))
+                                    operation.Cancel();
+                                if (operation.IsCancellationRequested && request.CancellationToken.IsCancellationRequested) break;
+                            }
+                            Task.WaitAll(listingTask, downloadTask);
+                        }
+                        catch
+                        {
+                            operation.Cancel();
+                            try { Task.WaitAll(listingTask, downloadTask); } catch { }
+                            if (!request.CancellationToken.IsCancellationRequested && downloadTask.Status == TaskStatus.RanToCompletion &&
+                                downloadTask.Result != null && !downloadTask.Result.Success)
+                            {
+                                downloadTask.Result.DiagnosticPath = diagnostic;
+                                return downloadTask.Result;
+                            }
+                            if (!hasPair && listingTask.Status == TaskStatus.RanToCompletion && listingTask.Result.ExitCode == 3)
+                                return new ModSyncResult { Success = true, DiagnosticPath = diagnostic,
+                                    Message = "No cloud mods are present yet; install download completed without creating a remote folder." };
+                            throw;
+                        }
+                        if (request.CancellationToken.IsCancellationRequested) throw new OperationCanceledException(request.CancellationToken);
+                        var remote = listingTask.Result;
+                        var result = downloadTask.Result;
+                        if (remote.ExitCode == 3 && !hasPair)
+                            return new ModSyncResult { Success = true, DiagnosticPath = diagnostic,
+                                Message = "No cloud mods are present yet; install download completed without creating a remote folder." };
+                        if (remote.ExitCode != 0)
+                            throw new InvalidOperationException("Unable to list cloud mod names safely; staged bytes were not committed.\n" + remote.Log);
+                        if (result == null) throw new InvalidOperationException("Install mod download returned no result.");
+                        if (!result.Success) { result.DiagnosticPath = diagnostic; return result; }
+                        List<RcloneListedFile> remoteFiles;
+                        List<string> remoteNames;
+                        try
+                        {
+                            remoteFiles = DeserializeListedFiles(remote.Output);
+                            remoteNames = remoteFiles.Select(file => ListedPath(file)).ToList();
+                            ValidateInstallNames(remoteNames);
+                        }
+                        catch { QuarantineInstallStage(stage); throw; }
+                        var root = Path.GetFullPath(request.LocalFolder);
+                        RejectReparsePoints(root);
+                        var localEntries = Directory.GetFileSystemEntries(root, "*", SearchOption.AllDirectories)
+                            .Select(path => path.Substring(root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Length + 1)
+                                .Replace(Path.DirectorySeparatorChar, '/').Replace(Path.AltDirectorySeparatorChar, '/'));
+                        var localNames = localEntries.ToArray();
+                        var collision = FindWindowsCaseCollision(localNames.Concat(remoteNames));
+                        if (collision != null)
+                        {
+                            QuarantineInstallStage(stage);
+                            throw new InvalidOperationException("Mod names collide on a Windows destination. Rename the conflicting files before installing: " + collision);
+                        }
+                        try { ValidateInstallDestinationTypes(root, localNames, remoteNames); }
+                        catch { QuarantineInstallStage(stage); throw; }
+                        RejectReparsePoints(stage);
+                        var listed = remoteFiles.Where(file => !ListedPath(file).Split('/').Any(part => part.StartsWith(".pcls-modsync-", StringComparison.Ordinal)))
+                            .ToDictionary(file => ListedPath(file), StringComparer.Ordinal);
+                        foreach (var file in listed)
+                        {
+                            if (File.Exists(GetContainedFile(root, file.Key))) continue;
+                            if (file.Value.Size == null || file.Value.Size.Value < 0)
+                                throw new InvalidOperationException("Cloud inventory omitted a trustworthy file size: " + file.Key);
+                            var stagedFile = GetContainedFile(stage, file.Key);
+                            if (!File.Exists(stagedFile))
+                                throw new InvalidOperationException("A required cloud mod was not downloaded into the owned stage: " + file.Key);
+                            var info = new FileInfo(stagedFile);
+                            if (info.Length != file.Value.Size.Value)
+                            {
+                                QuarantineInstallStage(stage);
+                                throw new InvalidOperationException("Staged mod size differs from fresh cloud metadata; no staged files were committed: " + file.Key);
+                            }
+                        }
+                        request.CancellationToken.ThrowIfCancellationRequested();
+                        foreach (var name in listed.Keys)
+                        {
+                            request.CancellationToken.ThrowIfCancellationRequested();
+                            var stagedFile = GetContainedFile(stage, name);
+                            var destination = GetContainedFile(root, name);
+                            RejectReparseAncestors(stagedFile);
+                            RejectReparseAncestors(destination);
+                            if (File.Exists(destination)) continue;
+                            if (!File.Exists(stagedFile))
+                                throw new InvalidOperationException("A validated staged mod disappeared before commit: " + name);
+                            Directory.CreateDirectory(Path.GetDirectoryName(destination));
+                            RejectReparseAncestors(destination);
+                            File.Move(stagedFile, destination);
+                        }
+                        result.DiagnosticPath = diagnostic;
+                        return result;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                var cancelled = ex is OperationCanceledException || (request != null && request.CancellationToken.IsCancellationRequested);
+                var relink = request != null && (File.Exists(Path.Combine(request.StateDirectory ?? "", "paused")) ||
+                    (File.Exists(Path.Combine(request.StateDirectory ?? "", "pair.txt")) && !File.Exists(Path.Combine(request.StateDirectory ?? "", "ready"))));
+                AppendDiagnostic(diagnostic, "install-download", ex.ToString());
+                return new ModSyncResult { Success = false, Cancelled = cancelled, RequiresRelink = relink,
+                    DiagnosticPath = validated ? diagnostic : null,
+                    Message = cancelled ? "Install mod download cancelled; retry is safe. No automatic resync was attempted." : ex.Message };
+            }
+        }
+
+        private static ModSyncRequest CloneRequest(ModSyncRequest source, CancellationToken token) => new ModSyncRequest
+        {
+            GameId = source.GameId, LocalFolder = source.LocalFolder, RemoteFolder = source.RemoteFolder,
+            LaunchFile = source.LaunchFile, StateDirectory = source.StateDirectory, RcloneExecutable = source.RcloneExecutable,
+            TimeoutSeconds = source.TimeoutSeconds, CancellationToken = token, Progress = source.Progress,
+            DownloadCompareDirectory = source.DownloadCompareDirectory
+        };
+
+        private static string ListedPath(RcloneListedFile file)
+        {
+            var value = file?.Path ?? file?.Name;
+            if (string.IsNullOrEmpty(value)) throw new InvalidOperationException("Cloud inventory contains a file without a name.");
+            return value;
+        }
+
+        private static void ValidateInstallNames(IEnumerable<string> names)
+        {
+            var reserved = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9" };
+            var unique = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var name in names)
+            {
+                if (string.IsNullOrWhiteSpace(name) || name.StartsWith("/", StringComparison.Ordinal) || name.Contains("\\") ||
+                    name.IndexOfAny(new[] { ':', '\r', '\n', '\0' }) >= 0)
+                    throw new InvalidOperationException("Cloud inventory contains an unsafe Windows mod path.");
+                if (!unique.Add(name)) throw new InvalidOperationException("Cloud inventory contains a duplicate file path: " + name);
+                foreach (var part in name.Split('/'))
+                {
+                    var stem = part.Split('.')[0];
+                    if (part.Length == 0 || part == "." || part == ".." || part.EndsWith(".") || part.EndsWith(" ") ||
+                        part.IndexOfAny(new[] { '<', '>', ':', '"', '|', '?', '*', '\\' }) >= 0 || part.Any(char.IsControl) ||
+                        reserved.Contains(stem) || string.Equals(part, ".pcls-stage-owner", StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException("Cloud inventory contains an unsafe Windows mod path: " + name);
+                }
+            }
+            var windowsNames = new HashSet<string>(unique, StringComparer.OrdinalIgnoreCase);
+            foreach (var name in unique)
+            {
+                var parts = name.Split('/');
+                for (var i = 1; i < parts.Length; i++)
+                    if (windowsNames.Contains(string.Join("/", parts.Take(i))))
+                        throw new InvalidOperationException("Cloud inventory contains both a file and a path beneath it: " + name);
+            }
+        }
+
+        private static string GetContainedFile(string root, string relative)
+        {
+            var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var full = Path.GetFullPath(Path.Combine(fullRoot, relative.Replace('/', Path.DirectorySeparatorChar)));
+            if (!full.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("A mod path escaped its staging root.");
+            return full;
+        }
+
+        private static void ValidateInstallDestinationTypes(string root, IEnumerable<string> localNames, IEnumerable<string> remoteNames)
+        {
+            var localFiles = new HashSet<string>(localNames.Where(name => File.Exists(GetContainedFile(root, name))), StringComparer.OrdinalIgnoreCase);
+            var localDirectories = new HashSet<string>(localNames.Where(name => Directory.Exists(GetContainedFile(root, name))), StringComparer.OrdinalIgnoreCase);
+            foreach (var name in remoteNames)
+            {
+                if (localDirectories.Contains(name))
+                    throw new InvalidOperationException("A cloud mod file conflicts with an existing local directory: " + name);
+                var parts = name.Split('/');
+                for (var i = 1; i < parts.Length; i++)
+                {
+                    var parent = string.Join("/", parts.Take(i));
+                    if (localFiles.Contains(parent))
+                        throw new InvalidOperationException("A cloud mod path requires a directory where a local file exists: " + parent);
+                }
+                if (localNames.Any(local => local.StartsWith(name + "/", StringComparison.OrdinalIgnoreCase)))
+                    throw new InvalidOperationException("A cloud mod file conflicts with an existing local path below it: " + name);
+            }
+        }
+
+        private static string GetInstallStagePath(ModSyncRequest request)
+        {
+            var local = Path.GetFullPath(request.LocalFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return Path.Combine(Path.GetDirectoryName(local), Path.GetFileName(local) + ".pcls-stage-" +
+                Key(request.GameId + "\n" + local + "\n" + request.RemoteFolder).Substring(0, 24));
+        }
+
+        private static void PrepareInstallStage(string stage, string identity)
+        {
+            var marker = Path.Combine(stage, ".pcls-stage-owner");
+            if (Directory.Exists(stage))
+            {
+                RejectReparsePoints(stage);
+                if (!File.Exists(marker) || !string.Equals(File.ReadAllText(marker), identity, StringComparison.Ordinal))
+                    throw new InvalidOperationException("A pre-existing install staging directory is not owned by this exact mod mapping.");
+            }
+            else Directory.CreateDirectory(stage);
+            File.WriteAllText(marker, identity);
+            RejectReparsePoints(stage);
+        }
+
+        private static void QuarantineInstallStage(string stage)
+        {
+            if (!Directory.Exists(stage)) return;
+            Directory.Move(stage, stage + ".quarantine-" + Guid.NewGuid().ToString("N"));
+        }
+
+        /// <summary>
+        /// Restores optional cloud mods after the installer has successfully installed the base game.
+        /// The caller must gate this on the global feature setting and a configured mod path.
+        /// </summary>
+        public ModSyncResult RestoreAfterInstall(ModSyncRequest request)
+        {
+            string diagnostic = null;
+            var validated = false;
+            try
+            {
+                Validate(request);
+                validated = true;
+                request.CancellationToken.ThrowIfCancellationRequested();
+                Directory.CreateDirectory(Path.GetDirectoryName(request.StateDirectory));
+                using (new FileStream(request.StateDirectory + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+                {
+                    diagnostic = DiagnosticPath(request);
+                    if (Directory.Exists(request.StateDirectory))
+                    {
+                        var pairFile = Path.Combine(request.StateDirectory, "pair.txt");
+                        var readyFile = Path.Combine(request.StateDirectory, "ready");
+                        if (File.Exists(pairFile))
+                        {
+                            var identity = Path.GetFullPath(request.LocalFolder) + "\n" + request.RemoteFolder;
+                            if (!string.Equals(File.ReadAllText(pairFile), identity, StringComparison.Ordinal))
+                                throw new InvalidOperationException("Mod sync mapping changed. Restore the exact previous paths or explicitly recover the retained state before install restore.");
+                            if (!File.Exists(readyFile))
+                                throw new InvalidOperationException("A previous initial mod sync did not finish. State is retained; explicitly inspect and recover or relink it before retrying install restore.");
+                            var archive = request.StateDirectory + ".archive-" + Guid.NewGuid().ToString("N");
+                            Directory.Move(request.StateDirectory, archive);
+                            Directory.CreateDirectory(request.StateDirectory);
+                            diagnostic = DiagnosticPath(request);
+                            AppendDiagnostic(diagnostic, "install-restore", "Archived completed pairing at " + archive);
+                        }
+                    }
+                    // Installation explicitly restores absence; normal sync must still refuse it.
+                    // Check existing ancestors before creation so a link cannot redirect mkdir.
+                    RejectReparsePoints(request.LocalFolder);
+                    Directory.CreateDirectory(request.LocalFolder);
+                    Directory.CreateDirectory(request.StateDirectory);
+                    return SynchronizeLocked(request, _ => false, true);
+                }
+            }
+            catch (Exception ex)
+            {
+                var cancelled = ex is OperationCanceledException || (request != null && request.CancellationToken.IsCancellationRequested);
+                var relink = request != null && (File.Exists(Path.Combine(request.StateDirectory ?? "", "paused")) ||
+                    (File.Exists(Path.Combine(request.StateDirectory ?? "", "pair.txt")) && !File.Exists(Path.Combine(request.StateDirectory ?? "", "ready"))));
+                AppendDiagnostic(validated ? (diagnostic ?? DiagnosticPath(request)) : null, "install-restore", ex.ToString());
+                return new ModSyncResult { Success = false, Cancelled = cancelled, RequiresRelink = relink, DiagnosticPath = validated ? (diagnostic ?? DiagnosticPath(request)) : null,
+                    Message = cancelled ? "Install mod restore cancelled. Base-game installation remains successful; restore can be retried." : ex.Message };
+            }
         }
 
         public void Pause(string stateDirectory)
@@ -158,11 +635,13 @@ namespace PersonalCloudLibrarySource
 
         public ModSyncResult Relink(ModSyncRequest request, Func<string, bool> confirm)
         {
+            string diagnostic = null;
             try
             {
                 Validate(request);
+                request.CancellationToken.ThrowIfCancellationRequested();
                 if (confirm == null || !confirm("Explicitly relink mods after reinstall/recovery? Previous sync state will be archived. Cloud files will be merged into the local folder, not deleted because the game was removed.\n\nLocal: " + request.LocalFolder + "\nCloud: " + request.RemoteFolder))
-                    return Declined();
+                    return Declined(request);
                 Directory.CreateDirectory(Path.GetDirectoryName(request.StateDirectory));
                 using (new FileStream(request.StateDirectory + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
                 {
@@ -170,11 +649,18 @@ namespace PersonalCloudLibrarySource
                         Directory.Move(request.StateDirectory, request.StateDirectory + ".archive-" + Guid.NewGuid().ToString("N"));
                     Directory.CreateDirectory(request.LocalFolder);
                     Directory.CreateDirectory(request.StateDirectory);
+                    diagnostic = DiagnosticPath(request);
                     // The relink confirmation already covers this initial merge.
                     return SynchronizeLocked(request, _ => true);
                 }
             }
-            catch (Exception ex) { return new ModSyncResult { Success = false, Message = ex.Message }; }
+            catch (Exception ex)
+            {
+                var cancelled = ex is OperationCanceledException || (request != null && request.CancellationToken.IsCancellationRequested);
+                AppendDiagnostic(diagnostic, "relink", ex.ToString());
+                return new ModSyncResult { Success = false, Cancelled = cancelled, RequiresRelink = true, DiagnosticPath = diagnostic,
+                    Message = cancelled ? "Relink cancelled. No automatic resync was attempted." : ex.Message };
+            }
         }
 
         public static ModSyncRequest RequireCurrentMapping(ModSyncRequest imported, Func<ModSyncRequest> loadCurrent)
@@ -190,7 +676,8 @@ namespace PersonalCloudLibrarySource
             return current;
         }
 
-        private static ModSyncResult Declined() => new ModSyncResult { Success = false, Message = "Mod sync cancelled; game launch requires an explicit decision." };
+        private static ModSyncResult Declined(ModSyncRequest request) => new ModSyncResult { Success = false, Cancelled = true,
+            DiagnosticPath = DiagnosticPath(request), Message = "Mod sync declined; game launch requires an explicit decision." };
 
         private static void Validate(ModSyncRequest r)
         {
@@ -231,11 +718,23 @@ namespace PersonalCloudLibrarySource
             return string.Equals(p, r, StringComparison.OrdinalIgnoreCase) || p.StartsWith(r + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
         }
 
-        private static void RejectReparsePoints(string root)
+        private static void RejectReparseAncestors(string root)
         {
             for (var parent = new DirectoryInfo(root); parent != null; parent = parent.Parent)
-                if ((parent.Attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                FileAttributes attributes;
+                try { attributes = File.GetAttributes(parent.FullName); }
+                catch (FileNotFoundException) { continue; }
+                catch (DirectoryNotFoundException) { continue; }
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
                     throw new InvalidOperationException("Mod sync does not follow directory links or junctions.");
+            }
+        }
+
+        private static void RejectReparsePoints(string root)
+        {
+            RejectReparseAncestors(root);
+            if (!Directory.Exists(root)) return;
             // Check each directory before descending, rather than following links recursively.
             var pending = new Stack<string>(); pending.Push(root);
             while (pending.Count != 0)

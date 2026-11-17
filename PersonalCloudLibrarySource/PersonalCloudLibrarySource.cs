@@ -19,7 +19,7 @@ namespace PersonalCloudLibrarySource
 
         private PersonalCloudLibrarySourceSettingsViewModel settings { get; set; }
 
-        public override Guid Id { get; } = Guid.Parse("61993828-67a8-4468-93a2-293442e36328");
+        public override Guid Id { get; } = ForkIdentity.PluginId;
 
         public override string Name => ResolveLibraryDisplayName(settings?.Settings);
 
@@ -39,6 +39,11 @@ namespace PersonalCloudLibrarySource
         public override IEnumerable<GameMetadata> GetGames(LibraryGetGamesArgs args)
         {
             var importedGames = new List<GameMetadata>();
+            if (!CanUseForkLibrary)
+            {
+                logger.Info("Cloud Storage Integration is waiting for the legacy-adoption or separate-setup decision.");
+                return importedGames;
+            }
             var diagnostics = new List<string>();
             PersonalCloudLibrarySourceSettings pluginSettings = null;
 
@@ -146,7 +151,9 @@ namespace PersonalCloudLibrarySource
                         item,
                         pluginSettings,
                         rcloneFileCopier,
-                        localFileCopier));
+                        localFileCopier,
+                        CreateInstallModRestore(args.Game, item, manifest, pluginSettings),
+                        () => StartInstallBackgroundModSync(args.Game)));
                     logger.Info($"Personal Cloud Library Source install action returned for {item.Id}.");
                     return installActions;
                 }
@@ -254,14 +261,13 @@ namespace PersonalCloudLibrarySource
 
         public static string ResolveLibraryDisplayName(PersonalCloudLibrarySourceSettings pluginSettings)
         {
-            var displayName = pluginSettings?.LibraryDisplayName;
-            return string.IsNullOrWhiteSpace(displayName)
-                ? "Personal Cloud Library Source"
-                : displayName.Trim();
+            return ForkIdentity.ResolveDisplayName(pluginSettings?.LibraryDisplayName);
         }
 
-        private string LoadManifestJson(PersonalCloudLibrarySourceSettings pluginSettings)
+        private string LoadManifestJson(PersonalCloudLibrarySourceSettings pluginSettings,
+            System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var sourceProviderType = GetProviderType(pluginSettings);
 
             if (string.Equals(
@@ -270,7 +276,7 @@ namespace PersonalCloudLibrarySource
                 StringComparison.OrdinalIgnoreCase))
             {
                 logger.Info("Personal Cloud Library Source loading manifest using rclone.");
-                return rcloneManifestReader.ReadManifestJson(pluginSettings);
+                return rcloneManifestReader.ReadManifestJson(pluginSettings, cancellationToken);
             }
 
             if (string.Equals(
@@ -859,7 +865,7 @@ namespace PersonalCloudLibrarySource
 
             return Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "PersonalCloudLibrarySource");
+                "CHRCloudLibrary");
         }
 
         private string ResolveDiagnosticsDirectory()
@@ -874,7 +880,7 @@ namespace PersonalCloudLibrarySource
             }
 
             var localApplicationData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            return Path.Combine(localApplicationData, "PersonalCloudLibrarySource", "diagnostics");
+            return Path.Combine(localApplicationData, "CHRCloudLibrary", "diagnostics");
         }
 
         public override ISettings GetSettings(bool firstRunSettings)

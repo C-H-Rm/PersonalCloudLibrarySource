@@ -7,8 +7,10 @@
     <Compile Include="../../PersonalCloudLibrarySource/PersonalCloudLibraryUninstallController.cs" Link="PersonalCloudLibraryUninstallController.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/SafeCacheDeletionPolicy.cs" Link="SafeCacheDeletionPolicy.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/RcloneInstallController.cs" Link="RcloneInstallController.cs" />
+    <Compile Include="../../PersonalCloudLibrarySource/InstallProgressState.cs" Link="InstallProgressState.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/ModSyncGameMenu.cs" Link="ModSyncGameMenu.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/ModSyncService.cs" Link="ModSyncService.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/ModSyncProcess.cs" Link="ModSyncProcess.cs" />
+    <Compile Include="../../PersonalCloudLibrarySource/ModSyncUserInteraction.cs" Link="ModSyncUserInteraction.cs" />
   </ItemGroup>
 </Project>

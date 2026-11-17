@@ -1,4 +1,6 @@
-# Personal Cloud Library Source
+# Cloud Storage Integration
+
+This fork is a standalone Playnite extension, based on Personal Cloud Library Source by The Bearclaw and ztwslayer. It has its own add-on UUID and assembly; upstream updates do not replace it. See [download center and migration](docs/download-center-and-migration.md) before switching an existing library.
 
 ## How This Works
 
@@ -29,6 +31,8 @@ This is not a gameplay streaming service. It does not provide games, ROMs, BIOS 
 - Manual `Remove cached copy` action for installed/cached entries.
 - Optional import diagnostics.
 - Customizable library display name inside Playnite.
+- Desktop top-panel download center with live per-game progress and persistent operation history.
+- A separate extension identity, with explicit adoption of legacy settings and existing game records.
 
 ## Playnite Metadata
 
@@ -44,22 +48,18 @@ It only catalogs user-supplied manifest entries and copies or downloads user-own
 
 ## Nightly builds of this fork
 
-Download the latest development build from **[Releases → Nightly](https://github.com/C-H-Rm/PersonalCloudLibrarySource/releases/tag/nightly)**. Under **Assets**, download the `.pext` file and open it with Playnite; restart Playnite when prompted. The official add-on browser installs upstream, not this fork's development build.
+The standalone version described here is a private candidate until explicitly published. Existing **[Releases → Nightly](https://github.com/C-H-Rm/PersonalCloudLibrarySource/releases/tag/nightly)** assets may still use the legacy identity; check the package's name and release notes before switching. The official add-on browser installs upstream, not CHR Cloud Library.
 
 The existing verified Windows build updates this single prerelease after successful builds of `main` (including manual runs on `main`). Pull requests and failed builds cannot publish. The release includes the installable package, SHA-256 checksum and source build receipt. Release downloads do not have the Actions artifact retention deadline. Stable releases are not changed; this is not an automatic Playnite add-on update channel.
 
 ## Installation for Users
 
-The recommended way to install **Personal Cloud Library Source** is through Playnite's official add-on browser.
+Install **Cloud Storage Integration** from its standalone `.pext`, not the upstream add-on-browser listing.
 
-1. Open Playnite.
-2. Go to **Main Menu → Add-ons**.
-3. Open **Browse**.
-4. Search for **Personal Cloud Library Source**.
-5. Select the add-on and click **Install**.
-6. Restart Playnite when prompted.
-7. Open the plugin settings and choose a provider mode.
-8. Run **Update Game Library**.
+1. If switching from the original extension, finish any transfers and disable it in Add-ons, then restart. Keep its data and library entries for adoption.
+2. Open the standalone `.pext` with Playnite and restart when prompted.
+3. Choose the explicit legacy-adoption prompt to keep existing settings and game records, or set up a separate fresh library. See the migration guide below; do not delete and reimport the old games.
+4. For a fresh setup, select a provider in the plugin settings and run **Update Game Library**.
 
 ![Provider settings example](docs/images/pcls-settings-provider.png)
 
@@ -94,7 +94,7 @@ To create a local `.pext` package for testing or manual installation:
 .\tools\package-extension.ps1
 ```
 
-For normal user installation, use Playnite's official add-on browser instead of building from source.
+For normal user installation, use the supplied standalone `.pext` instead of building from source. Playnite's official add-on-browser listing installs the upstream extension, not this standalone build.
 
 ## Provider Modes
 

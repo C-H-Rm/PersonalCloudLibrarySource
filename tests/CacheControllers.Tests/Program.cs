@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using Playnite.SDK;
 using Playnite.SDK.Models;
 using Playnite.SDK.Plugins;
@@ -139,6 +140,27 @@ class Program
             Check(completed == context.Owner && f.Game.IsInstalled && f.Game.GameActions.Count == 1, "wrong install completion");
             Check(f.Game.GameActions[0].Path == f.Item.Launch, "wrong launch action");
         });
+        Test("install publishes shared per-game download progress and removes it after success", () =>
+        {
+            using var f = new Fixture();
+            f.Game.IsInstalled = false; File.Delete(f.Item.Launch);
+            using var entered = new ManualResetEventSlim();
+            using var release = new ManualResetEventSlim();
+            var c = f.Installer(() => {
+                entered.Set(); release.Wait(TimeSpan.FromSeconds(2));
+                File.WriteAllText(f.Item.Launch, "fixture download");
+                return new CopyResult { Succeeded = true };
+            });
+            try {
+                c.Install(new InstallActionArgs());
+                Check(entered.Wait(2000), "download fixture did not start");
+                var status = InstallProgressState.Shared.Get(f.Game.Id);
+                Check(status != null && status.Active && status.Percentage == 50 && status.TotalBytes == 100 && status.BytesPerSecond == 25,
+                    "shared progress state did not receive the exact fixture telemetry");
+            } finally { release.Set(); }
+            context.Until(() => !f.Game.IsInstalling);
+            Check(f.Game.IsInstalled && InstallProgressState.Shared.Get(f.Game.Id) == null, "successful progress did not disappear");
+        });
         foreach (var failure in new[] { "copy failure", "missing executable", "exception" })
         Test("install " + failure + " clears progress without success", () =>
         {
@@ -163,6 +185,116 @@ class Program
             c.Install(new InstallActionArgs());
             context.Until(() => !f.Game.IsInstalling);
             Check(installed == 1 && cancelled == 0 && f.Game.IsInstalled, "reported both installation and cancellation");
+        });
+        foreach (var mode in new[] { "disabled", "no path", "local provider", "plugin disabled" })
+        Test("optional install mods are skipped: " + mode, () =>
+        {
+            using var f = new Fixture();
+            f.Game.IsInstalled = false; f.Item.ModPath = "Mods";
+            if (mode == "disabled") f.Settings.EnableModSync = false;
+            if (mode == "no path") f.Item.ModPath = " ";
+            if (mode == "local provider") f.Settings.ProviderType = "local";
+            if (mode == "plugin disabled") f.Settings.Enabled = false;
+            int mods = 0, installed = 0;
+            var c = f.Installer(() => new CopyResult { Succeeded = true }, (token, progress, recover) =>
+            { mods++; return Task.FromResult(new ModSyncResult { Success = true }); });
+            c.Installed = () => installed++;
+            c.Install(new InstallActionArgs()); context.Until(() => !f.Game.IsInstalling);
+            Check(mods == 0 && installed == 1 && f.Game.IsInstalled, "ineligible install restored mods or lost the base game");
+        });
+        foreach (var mode in new[] { "failure", "cancelled", "exception", "conflicts" })
+        Test("mod-only retry retains base install after optional " + mode, () =>
+        {
+            using var f = new Fixture();
+            f.Game.IsInstalled = false; f.Item.ModPath = "Mods";
+            int copies = 0, mods = 0, installed = 0, cancelled = 0;
+            var c = f.Installer(() => { copies++; return new CopyResult { Succeeded = true }; }, (token, progress, recover) =>
+            {
+                Check(!recover, "ordinary mod retry silently authorized state recovery");
+                if (++mods > 1) return Task.FromResult(new ModSyncResult { Success = true });
+                if (mode == "exception") throw new IOException("mod fixture failed");
+                return Task.FromResult(new ModSyncResult { Success = mode == "conflicts", HasConflicts = mode == "conflicts",
+                    Cancelled = mode == "cancelled", Message = "optional mods fixture" });
+            });
+            c.Installed = () => { Check(Environment.CurrentManagedThreadId == context.Owner, "installed event off UI"); installed++; };
+            c.Cancelled = () => cancelled++;
+            c.Install(new InstallActionArgs()); context.Until(() => !f.Game.IsInstalling);
+            var status = InstallProgressState.Shared.Get(f.Game.Id);
+            Check(f.Game.IsInstalled && installed == 1 && cancelled == 0 && status.CanRetry && status.RetryLabel == "Retry mods",
+                "optional failure cancelled base install or lost retry status");
+            Check(InstallProgressState.Shared.Retry(f.Game.Id), "mod-only retry not offered");
+            context.Until(() => !f.Game.IsInstalling);
+            Check(copies == 1 && mods == 2 && installed == 1 && cancelled == 0 && InstallProgressState.Shared.Get(f.Game.Id) == null,
+                "mod retry repeated base download/install event or left progress busy");
+        });
+        Test("install mod retry never starts recovery or two-way synchronization", () =>
+        {
+            using var f = new Fixture(); f.Game.IsInstalled = false; f.Item.ModPath = "Mods";
+            int calls = 0, copies = 0;
+            var c = f.Installer(() => { copies++; return new CopyResult { Succeeded = true }; }, (token, progress, recover) =>
+            {
+                Check(!recover, "installation retry requested two-way recovery");
+                calls++;
+                return Task.FromResult(calls == 1 ? new ModSyncResult { RequiresRelink = true, Message = "interrupted setup" } :
+                    new ModSyncResult { Success = true });
+            });
+            c.Install(new InstallActionArgs()); context.Until(() => !f.Game.IsInstalling);
+            var status = InstallProgressState.Shared.Get(f.Game.Id);
+            Check(calls == 1 && status.RetryLabel == "Retry mods" && !status.Message.Contains("archives"),
+                "download failure exposed a baseline reset instead of download-only retry");
+            Check(InstallProgressState.Shared.Retry(f.Game.Id), "explicit recovery unavailable");
+            context.Until(() => !f.Game.IsInstalling);
+            Check(calls == 2 && copies == 1 && f.Game.IsInstalled && InstallProgressState.Shared.Get(f.Game.Id) == null,
+                "recovery redownloaded game or left mod progress stuck");
+        });
+        Test("background mods start only after Installed and cleared installation state", () =>
+        {
+            using var f = new Fixture(); f.Game.IsInstalled = false; f.Item.ModPath = "Mods";
+            int installed = 0, backgroundStarted = 0;
+            var unfinishedBackground = new TaskCompletionSource<bool>();
+            var c = f.Installer(() => new CopyResult { Succeeded = true },
+                (token, progress, recover) => Task.FromResult(new ModSyncResult { Success = true }), () =>
+                {
+                    Check(installed == 1 && !f.Game.IsInstalling && f.Game.IsInstalled, "background started before install completion");
+                    Check(InstallProgressState.Shared.Get(f.Game.Id) == null, "install session still owned by background starter");
+                    backgroundStarted++;
+                    _ = unfinishedBackground.Task; // Explicit blocked background double; must not be awaited by Install.
+                });
+            c.Installed = () => { Check(!f.Game.IsInstalling, "Installed emitted while game still marked installing"); installed++; };
+            c.Install(new InstallActionArgs()); context.Until(() => backgroundStarted == 1);
+            Check(!unfinishedBackground.Task.IsCompleted && installed == 1 && !f.Game.IsInstalling,
+                "background work blocked completion");
+        });
+        Test("failed optional download never queues background sync", () =>
+        {
+            using var f = new Fixture(); f.Game.IsInstalled = false; f.Item.ModPath = "Mods";
+            int background = 0, installed = 0;
+            var c = f.Installer(() => new CopyResult { Succeeded = true },
+                (token, progress, recover) => Task.FromResult(new ModSyncResult { Message = "download failed" }), () => background++);
+            c.Installed = () => installed++;
+            c.Install(new InstallActionArgs()); context.Until(() => !f.Game.IsInstalling);
+            Check(installed == 1 && background == 0 && f.Game.IsInstalled, "failure queued two-way work or lost base game");
+        });
+        Test("active inline mod restoration can be cancelled without uninstalling the game", () =>
+        {
+            using var f = new Fixture(); f.Game.IsInstalled = false; f.Item.ModPath = "Mods";
+            int installed = 0, cancelled = 0;
+            var c = f.Installer(() => new CopyResult { Succeeded = true }, async (token, progress, recover) =>
+            {
+                progress(new ModSyncProgress { Phase = "bisync", Bytes = 5, TotalBytes = 100, BytesPerSecond = 2 });
+                await Task.Delay(Timeout.Infinite, token);
+                return new ModSyncResult { Success = true };
+            });
+            c.Installed = () => installed++; c.Cancelled = () => cancelled++;
+            c.Install(new InstallActionArgs());
+            context.Until(() => InstallProgressState.Shared.Get(f.Game.Id)?.Phase == "DownloadingMods");
+            var status = InstallProgressState.Shared.Get(f.Game.Id);
+            Check(f.Game.IsInstalled && f.Game.IsInstalling && installed == 0 && status.Percentage == null,
+                "mod stage lost base game or invented a combined-stage percentage");
+            Check(InstallProgressState.Shared.Cancel(f.Game.Id, status.OperationId), "inline mod cancel not accepted");
+            context.Until(() => !f.Game.IsInstalling);
+            Check(f.Game.IsInstalled && installed == 1 && cancelled == 0 && InstallProgressState.Shared.Get(f.Game.Id).CanRetry,
+                "mod cancellation cancelled/uninstalled base game or permanently disabled retry");
         });
         Test("cancel clears the separate host game record", () =>
         {
@@ -292,7 +424,9 @@ class Program
             Api.Database.Games.Game = Game;
         }
         public PersonalCloudLibraryUninstallController Controller(Action before = null) => new PersonalCloudLibraryUninstallController(Api, Game, Item, Settings, before ?? (() => Paused++));
-        public RcloneInstallController Installer(Func<CopyResult> copy) => new RcloneInstallController(Game, Item, Settings, new RcloneFileCopier { Copy = copy }, new LocalFileCopier { Copy = copy });
+        public RcloneInstallController Installer(Func<CopyResult> copy,
+            Func<CancellationToken, Action<ModSyncProgress>, bool, Task<ModSyncResult>> mods = null, Action background = null) =>
+            new RcloneInstallController(Game, Item, Settings, new RcloneFileCopier { Copy = copy }, new LocalFileCopier { Copy = copy }, mods, background);
         public PersonalCloudLibrarySource.PersonalCloudLibrarySource MenuPlugin(string json)
         {
             var plugin = new PersonalCloudLibrarySource.PersonalCloudLibrarySource { ModManifestPath = Path.Combine(Folder, "manifest.json") };
@@ -330,7 +464,7 @@ namespace System.Windows
 }
 namespace Playnite.SDK.Models
 {
-    public class Game { public Guid Id = Guid.NewGuid(), PluginId; public string GameId = "test", InstallDirectory; public bool IsInstalled, IsUninstalling, IsInstalling; public System.Collections.ObjectModel.ObservableCollection<GameAction> GameActions; }
+    public class Game { public Guid Id = Guid.NewGuid(), PluginId; public string Name = "Test game", GameId = "test", InstallDirectory; public bool IsInstalled, IsUninstalling, IsInstalling; public System.Collections.ObjectModel.ObservableCollection<GameAction> GameActions; }
     public enum GameActionType { File }
     public class GameAction { public string Name, Path, WorkingDir; public GameActionType Type; public bool IsPlayAction; }
 }
@@ -411,7 +545,25 @@ namespace PersonalCloudLibrarySource
     }
     public class MenuSettings { public PersonalCloudLibrarySourceSettings Settings = new PersonalCloudLibrarySourceSettings(); }
     public class PersonalCloudLibraryManifest { public System.Collections.Generic.List<PersonalCloudLibraryItem> Items; }
-    public class CopyResult { public bool Succeeded; public string Message; public Exception Exception; }
-    public class RcloneFileCopier { public Func<CopyResult> Copy; public CopyResult CopyRemoteDirectoryToLocalPath(PersonalCloudLibrarySourceSettings settings, string source, string target) => Copy(); }
+    public class CopyResult { public bool Succeeded, Cancelled; public string Message; public Exception Exception; }
+    // Explicit transfer double for exercising the real install controller/host-context boundary.
+    public class RcloneTransferProgress
+    {
+        public string Phase; public long CompletedBytes; public long? TotalBytes;
+        public double BytesPerSecond; public double? Percentage;
+    }
+    public class RcloneFileCopier
+    {
+        public Func<CopyResult> Copy;
+        public CopyResult CopyRemoteDirectoryToLocalPath(PersonalCloudLibrarySourceSettings settings, string source, string target) => Copy();
+        public CopyResult CopyRemoteDirectoryToLocalPath(PersonalCloudLibrarySourceSettings settings, string source, string target,
+            CancellationToken cancellationToken, Action<RcloneTransferProgress> progress)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Invoke(new RcloneTransferProgress { Phase = "Inventory" });
+            progress?.Invoke(new RcloneTransferProgress { Phase = "Downloading", CompletedBytes = 50, TotalBytes = 100, BytesPerSecond = 25, Percentage = 50 });
+            return Copy();
+        }
+    }
     public class LocalFileCopier { public Func<CopyResult> Copy; public CopyResult CopyFileToLocalPath(string source, string target) => Copy(); }
 }

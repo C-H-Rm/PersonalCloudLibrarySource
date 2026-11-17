@@ -9,6 +9,14 @@ on:
       - tests/CacheControllers.Tests/**
       - tests/CacheSafety.Tests/**
       - tests/RcloneTransfers.Tests/**
+      - tests/ModSync.Tests/**
+      - tests/ModSyncUx.Tests/**
+      - tests/InstallProgress.Tests/**
+      - tests/DownloadCenter.Tests/**
+      - tests/LegacyMigration.Tests/**
+      - tools/test-standalone-identity.py
+      - tests/InstallModRestoration.Tests/**
+      - tests/PostInstallModSyncQueue.Tests/**
       - tools/package-extension.ps1
       - tools/verify-package.ps1
       - tools/test-package-extension.ps1
@@ -24,6 +32,14 @@ on:
       - tests/CacheControllers.Tests/**
       - tests/CacheSafety.Tests/**
       - tests/RcloneTransfers.Tests/**
+      - tests/ModSync.Tests/**
+      - tests/ModSyncUx.Tests/**
+      - tests/InstallProgress.Tests/**
+      - tests/DownloadCenter.Tests/**
+      - tests/LegacyMigration.Tests/**
+      - tools/test-standalone-identity.py
+      - tests/InstallModRestoration.Tests/**
+      - tests/PostInstallModSyncQueue.Tests/**
       - tools/package-extension.ps1
       - tools/verify-package.ps1
       - tools/test-package-extension.ps1
@@ -72,6 +88,16 @@ jobs:
       - name: Test nightly publication guards without network access
         run: python -B tools/test-nightly-release.py
 
+      - name: Test shared download progress state
+        run: dotnet run --project tests/InstallProgress.Tests/InstallProgress.Tests.csproj --configuration Release
+
+      - name: Test download history and standalone migration
+        run: |
+          dotnet run --project tests/DownloadCenter.Tests/DownloadCenter.Tests.csproj --configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Download center tests failed.' }
+          dotnet run --project tests/LegacyMigration.Tests/LegacyMigration.Tests.csproj --configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Legacy adoption tests failed.' }
+
       - name: Test cache deletion safety
         run: dotnet run --project tests/CacheSafety.Tests/CacheSafety.Tests.csproj --configuration Release
 
@@ -90,6 +116,18 @@ jobs:
       - name: Test rclone transfer timeouts and local copies
         run: dotnet run --project tests/RcloneTransfers.Tests/RcloneTransfers.Tests.csproj --configuration Release
 
+      - name: Test mod sync safety, cancellation and recovery
+        run: dotnet run --project tests/ModSync.Tests/ModSync.Tests.csproj --configuration Release
+
+      - name: Test mod sync interaction and progress presentation
+        run: dotnet run --project tests/ModSyncUx.Tests/ModSyncUx.Tests.csproj --configuration Release
+
+      - name: Test one-way installation mod download and deferred two-way work
+        run: dotnet run --project tests/InstallModRestoration.Tests/InstallModRestoration.Tests.csproj --configuration Release
+
+      - name: Test post-install background mod queue cancellation and launch deferral
+        run: dotnet run --project tests/PostInstallModSyncQueue.Tests/PostInstallModSyncQueue.Tests.csproj --configuration Release
+
       - name: Build, package and inspect Playnite plugin
         id: package
         run: ./tools/package-extension.ps1 -MSBuildPath (Get-Command dotnet).Source
@@ -98,6 +136,11 @@ jobs:
         env:
           PACKAGE_PATH: ${{ steps.package.outputs.package_path }}
         run: ./tools/test-package-extension.ps1 -PackagePath $env:PACKAGE_PATH
+
+      - name: Verify standalone identity and exact built payload
+        env:
+          PACKAGE_PATH: ${{ steps.package.outputs.package_path }}
+        run: python -B tools/test-standalone-identity.py --package $env:PACKAGE_PATH
 
       # upload-artifact v7 can expose a single .pext directly, without an outer ZIP.
       - name: Upload installable Playnite file

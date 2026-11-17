@@ -73,7 +73,7 @@ def main():
     assert (fixture / outputs['checksum_path']).read_text().strip() == original_hash + '  ' + plugin.name
     with zipfile.ZipFile(plugin) as archive:
         assert archive.testzip() is None
-        assert set(archive.namelist()) == {'PersonalCloudLibrarySource.dll', 'extension.yaml', 'icon.png', 'Localization/en_US.xaml'}
+        assert set(archive.namelist()) == {'CHRCloudLibrary.dll', 'extension.yaml', 'icon.png', 'Localization/en_US.xaml'}
     passed('clean checkout rebuilds real plugin, WPF resources, receipts and GitHub outputs')
     guard_log = run([args.pwsh, '-NoLogo', '-NoProfile', '-File', 'tools/test-package-extension.ps1', '-PackagePath', str(plugin)])
     guards = re.search(r'RESULT packaging: (\d+) passed, (\d+) failed', guard_log)
@@ -106,9 +106,9 @@ def main():
     passed('invalid built localization fails packaging without publishing outputs or stale stage files')
 
     debug_log = run(package(['-DebugSymbols']))
-    debug_package = fixture / ('dist/PersonalCloudLibrarySource-' + outputs['version'] + '-debug-symbols.zip')
+    debug_package = fixture / ('dist/CHRCloudLibrary-' + outputs['version'] + '-debug-symbols.zip')
     with zipfile.ZipFile(debug_package) as archive:
-        assert archive.namelist() == ['PersonalCloudLibrarySource.pdb']
+        assert archive.namelist() == ['CHRCloudLibrary.pdb']
     with zipfile.ZipFile(plugin) as archive:
         assert not any(name.endswith('.pdb') or name.endswith('Playnite.SDK.dll') for name in archive.namelist())
     passed('optional PDB archive stays separate from installable plugin')

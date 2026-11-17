@@ -21,7 +21,7 @@ namespace PersonalCloudLibrarySource
         public const string AskEachTimeUninstallBehavior = "AskEachTime";
 
         private bool enabled = true;
-        private string libraryDisplayName = "Personal Cloud Library Source";
+        private string libraryDisplayName = ForkIdentity.DisplayName;
         private string sourceProviderType = LocalFileProviderType;
         private string localManifestPath = string.Empty;
         private string localLibraryRoot = string.Empty;

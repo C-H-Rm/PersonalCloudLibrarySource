@@ -34,7 +34,7 @@ namespace PersonalCloudLibrarySource
             return new[]
             {
                 new GameMenuItem { Description = "Sync mods", MenuSection = "Personal Cloud Library", Action = _ => RunModSync(game, false, true, false) },
-                new GameMenuItem { Description = "Relink mods after reinstall", MenuSection = "Personal Cloud Library", Action = _ => RunModSync(game, false, true, true) }
+                new GameMenuItem { Description = "Recover or relink mods", MenuSection = "Personal Cloud Library", Action = _ => RunModSync(game, false, true, true) }
             };
         }
     }

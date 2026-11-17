@@ -7,7 +7,7 @@
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>PersonalCloudLibrarySource</RootNamespace>
-    <AssemblyName>PersonalCloudLibrarySource</AssemblyName>
+    <AssemblyName>CHRCloudLibrary</AssemblyName>
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <Deterministic>true</Deterministic>
@@ -51,9 +51,20 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="LocalFileCopier.cs" />
+    <Compile Include="InstallProgressState.cs" />
+    <Compile Include="DownloadHistory.cs" />
+    <Compile Include="DownloadCenter.cs" />
+    <Compile Include="ForkIdentity.cs" />
+    <Compile Include="LegacyLibraryMigration.cs" />
+    <Compile Include="LegacyMigrationIntegration.cs" />
+    <Compile Include="PluginLifecycle.cs" />
     <Compile Include="ModSyncService.cs" />
     <Compile Include="ModSyncProcess.cs" />
     <Compile Include="ModSyncIntegration.cs" />
+    <Compile Include="InstallModRestoration.cs" />
+    <Compile Include="InstallModBackground.cs" />
+    <Compile Include="PostInstallModSyncQueue.cs" />
+    <Compile Include="ModSyncUserInteraction.cs" />
     <Compile Include="ModSyncGameMenu.cs" />
     <Compile Include="PersonalCloudLibrarySourceClient.cs" />
     <Compile Include="PersonalCloudLibrarySource.cs" />
@@ -64,6 +75,7 @@
     <Compile Include="PersonalCloudLibraryUninstallController.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="RcloneFileCopier.cs" />
+    <Compile Include="RcloneTransferProgress.cs" />
     <Compile Include="RcloneActivityTimeout.cs" />
     <Compile Include="RcloneInstallController.cs" />
     <Compile Include="RcloneManifestReader.cs" />
