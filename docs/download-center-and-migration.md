@@ -2,7 +2,7 @@
 
 ## Standalone identity
 
-**CHR Cloud Library** is a separate extension from Personal Cloud Library Source:
+**Personal Cloud Library Source (Standalone)** is a separate build from the upstream add-on:
 
 - Add-on ID: `CHRCloudLibrary_402561c2-ea33-4c60-a8f8-ec25e997a1d5`.
 - Runtime plugin ID: `402561c2-ea33-4c60-a8f8-ec25e997a1d5`.
@@ -10,7 +10,7 @@
 
 - Own data directory under Playnite's extension-data root, keyed by the new runtime UUID.
 
-The upstream add-on catalog identifies another extension. An update to upstream does not overwrite this fork. This does not add an automatic update feed or publish a release. Local candidate packages and public Releases must be distinguished.
+The upstream add-on catalog identifies the original extension. This standalone build has a distinct add-on ID and assembly; an upstream update does not overwrite it. This does not add an automatic update feed or publish a release.
 
 Adoption preserves the copied configuration bytes and last-write time. The historical default library name is mapped to the standalone name for display only; custom library names are preserved. Changing settings later is a separate explicit user action.
 

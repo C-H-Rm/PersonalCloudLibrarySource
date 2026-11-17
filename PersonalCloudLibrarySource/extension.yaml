@@ -1,6 +1,6 @@
 Id: CHRCloudLibrary_402561c2-ea33-4c60-a8f8-ec25e997a1d5
-Name: CHR Cloud Library
-Author: "C-H-R (based on The Bearclaw & ztwslayer)"
+Name: Personal Cloud Library Source (Standalone)
+Author: "The Bearclaw & ztwslayer (standalone fork)"
 Version: 0.2.0
 Module: CHRCloudLibrary.dll
 Type: GameLibrary

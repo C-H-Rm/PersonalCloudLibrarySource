@@ -41,7 +41,7 @@ namespace PersonalCloudLibrarySource
             var importedGames = new List<GameMetadata>();
             if (!CanUseForkLibrary)
             {
-                logger.Info("CHR Cloud Library is waiting for the legacy-adoption or separate-setup decision.");
+                logger.Info("Personal Cloud Library Source is waiting for the legacy-adoption or separate-setup decision.");
                 return importedGames;
             }
             var diagnostics = new List<string>();
