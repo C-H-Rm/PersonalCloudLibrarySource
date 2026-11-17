@@ -167,7 +167,7 @@ jobs:
     name: Publish nightly prerelease
     needs: build
     if: >-
-      github.repository == 'C-H-Rm/PersonalCloudLibrarySource' &&
+      github.repository == 'C-H-Rm/Cloud-Storage-Integration' &&
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest

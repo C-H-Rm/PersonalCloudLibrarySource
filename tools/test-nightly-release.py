@@ -35,6 +35,11 @@ class PublicationTests(unittest.TestCase):
         self.checksum = self.root / (self.package.name + '.sha256')
         self.checksum.write_text(f'{digest}  {self.package.name}\n')
 
+    def test_workflow_publish_guard_matches_publisher_repository(self):
+        workflow = Path(__file__).resolve().parents[1] / '.github/workflows/build-plugin.yml'
+        self.assertEqual(nightly.REPOSITORY, 'C-H-Rm/Cloud-Storage-Integration')
+        self.assertIn(f"github.repository == '{nightly.REPOSITORY}'", workflow.read_text())
+
     def test_valid_artifacts_are_exactly_package_checksum_and_receipt(self):
         self.assertEqual(nightly.artifacts(self.root, SHA), [self.package, self.checksum, self.receipt])
 
