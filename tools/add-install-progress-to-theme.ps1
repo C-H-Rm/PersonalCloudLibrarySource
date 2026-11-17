@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$InputFile,
-    [Parameter(Mandatory = $true)][string]$OutputFile
+    [Parameter(Mandatory = $true)][string]$OutputFile,
+    [switch]$LeftAlign
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -54,6 +55,7 @@ if ($column.LocalName -ne 'StackPanel' -or $column.GetAttribute('Orientation') -
     throw 'Unsupported button container. No theme changes made.'
 }
 if ($slots.Count -eq 1) {
+    $slot = $slots[0]
     $next = $slots[0].NextSibling
     while ($next -and ($next.NodeType -eq [Xml.XmlNodeType]::Whitespace -or $next.NodeType -eq [Xml.XmlNodeType]::SignificantWhitespace)) { $next = $next.NextSibling }
     if ($slots[0].ParentNode -ne $column -or $next -ne $row) { throw 'Existing progress host is not immediately above the button row.' }
@@ -65,6 +67,14 @@ if ($slots.Count -eq 1) {
     $indent = if ($row.PreviousSibling -and $row.PreviousSibling.NodeType -eq [Xml.XmlNodeType]::Whitespace) { $row.PreviousSibling.CloneNode($true) } else { $null }
     [void]$column.InsertBefore($slot, $row)
     if ($indent) { [void]$column.InsertBefore($indent, $row) }
+}
+if ($LeftAlign) {
+    # Avoid centering the plugin's width-capped content in a wider title column.
+    # Retain the 600px bar while constraining it to a narrower overview panel.
+    $slot.SetAttribute('HorizontalAlignment', 'Left')
+    $slot.SetAttribute('HorizontalContentAlignment', 'Stretch')
+    $slot.SetAttribute('Width', '600')
+    $slot.SetAttribute('MaxWidth', '{Binding ActualWidth, RelativeSource={RelativeSource AncestorType={x:Type StackPanel}}}')
 }
 $writerSettings = [Xml.XmlWriterSettings]::new()
 $writerSettings.Encoding = [Text.UTF8Encoding]::new($false)

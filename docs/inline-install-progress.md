@@ -41,7 +41,7 @@ Both Details and Grid game overviews include the host directly above their insta
 Reproduce from the pinned official input (download separately; the tool does not access the network):
 
 ```text
-python tools/prepare-daze-progress-theme.py --input Daze_27790ca9-d3a4-480f-bffe-914ec6768363_2_3_1.pthm --output Daze-Cloud-Progress-2.3.1.1.pthm --pwsh <pwsh executable>
+python tools/prepare-daze-progress-theme.py --input Daze_27790ca9-d3a4-480f-bffe-914ec6768363_2_3_1.pthm --output Daze-Cloud-Progress-2.3.1.2.pthm --pwsh <pwsh executable>
 ```
 
 The source archive SHA-256 is pinned in the tool. All original resources remain byte-identical except `theme.yaml` and the two overview XAMLs. A new ID/name prevents replacing upstream Daze; its MIT license and an integration note are included. The package format preserves the original Playnite theme ZIP structure. Upstream source: https://github.com/dariolupo/Daze_Theme/releases/tag/v2.3.1 . Native manifest and Toolbox packaging format inspected at Playnite commit `e2e6efcda311fea38fcd92f61c8ca90811d97f28`.

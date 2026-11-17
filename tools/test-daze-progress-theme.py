@@ -36,6 +36,11 @@ class DazePackageTests(unittest.TestCase):
                 root = ET.fromstring(archive.read(view.replace('/', '\\')))
                 hosts = [e for e in root.iter(W + 'ContentControl') if e.get(X + 'Name') == 'PCLS_InstallProgress']
                 self.assertEqual(len(hosts), 1, view)
+                self.assertEqual(hosts[0].get('HorizontalAlignment'), 'Left', view)
+                self.assertEqual(hosts[0].get('HorizontalContentAlignment'), 'Stretch', view)
+                self.assertEqual(hosts[0].get('Width'), '600', view)
+                self.assertEqual(hosts[0].get('MaxWidth'),
+                    '{Binding ActualWidth, RelativeSource={RelativeSource AncestorType={x:Type StackPanel}}}', view)
                 parents = {child: parent for parent in root.iter() for child in parent}
                 column = parents[hosts[0]]
                 self.assertEqual(column.tag, W + 'StackPanel')
@@ -56,6 +61,7 @@ class DazePackageTests(unittest.TestCase):
             self.assertNotIn('Id: ' + pack.SOURCE_ID, manifest)
             self.assertIn('ThemeApiVersion: 2.1.0', manifest)
             self.assertIn('Mode: Desktop', manifest)
+            self.assertIn('Version: 2.3.1.2', manifest)
         self.assertEqual(args.input.read_bytes(), self.original)
         self.assertEqual(hashlib.sha256(self.output.read_bytes()).hexdigest(), self.receipt['sha256'])
 

@@ -41,7 +41,7 @@ def prepare(source, output, pwsh):
         if re.findall(r'^Id:\s*(\S+)\s*$', manifest, re.M) != [SOURCE_ID]:
             raise ValueError('Unexpected source theme identity.')
         replacements = {'Id': THEME_ID, 'Name': THEME_NAME,
-                        'Author': 'Super Dario; PCLS integration by C-H-R', 'Version': '2.3.1.1'}
+                        'Author': 'Super Dario; PCLS integration by C-H-R', 'Version': '2.3.1.2'}
         for key, value in replacements.items():
             manifest, count = re.subn(r'^' + key + r':[^\r\n]*', key + ': ' + value, manifest, flags=re.M)
             if count != 1:
@@ -53,7 +53,7 @@ def prepare(source, output, pwsh):
                 incoming, prepared = Path(temporary) / f'{index}-original.xaml', Path(temporary) / f'{index}-prepared.xaml'
                 incoming.write_bytes(archive.read(names[view]))
                 result = subprocess.run([pwsh, '-NoProfile', '-File', str(support / 'add-install-progress-to-theme.ps1'),
-                    '-InputFile', str(incoming), '-OutputFile', str(prepared)], capture_output=True, text=True, timeout=30)
+                    '-InputFile', str(incoming), '-OutputFile', str(prepared), '-LeftAlign'], capture_output=True, text=True, timeout=30)
                 if result.returncode:
                     raise ValueError('Cannot integrate ' + view + ': ' + result.stderr)
                 changes[names[view]] = prepared.read_bytes()
