@@ -24,12 +24,12 @@ class PublicationTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='pcls-nightly-unit-')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.package = self.root / 'CHRCloudLibrary-1.2.3.pext'
+        self.package = self.root / 'CloudStorageIntegration-1.2.3.pext'
         with zipfile.ZipFile(self.package, 'w') as archive:
-            for name in ('CHRCloudLibrary.dll', 'extension.yaml', 'icon.png', 'Localization/en_US.xaml'):
+            for name in ('CloudStorageIntegration.dll', 'extension.yaml', 'icon.png', 'Localization/en_US.xaml'):
                 archive.writestr(name, 'Explicit unit-test fixture, not a compiled plugin')
         digest = hashlib.sha256(self.package.read_bytes()).hexdigest()
-        self.receipt = self.root / 'CHRCloudLibrary-1.2.3.build.json'
+        self.receipt = self.root / 'CloudStorageIntegration-1.2.3.build.json'
         self.receipt.write_text(json.dumps({'sourceCommit': SHA, 'sourceDirty': False,
             'sha256': digest, 'package': self.package.name}))
         self.checksum = self.root / (self.package.name + '.sha256')
@@ -102,7 +102,7 @@ class PublicationTests(unittest.TestCase):
                 remote.update(data)
                 return copy.deepcopy(remote)
             if path == 'releases/7/assets?per_page=100':
-                return [{'id': 8, 'name': 'CHRCloudLibrary-1.0.0.pext'},
+                return [{'id': 8, 'name': 'CloudStorageIntegration-1.0.0.pext'},
                         {'id': 9, 'name': 'manual-notes.txt'}]
             if path.startswith('releases/assets/') and method == 'DELETE':
                 deleted.append(path)

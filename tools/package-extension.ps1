@@ -39,10 +39,10 @@ $null = New-Item -ItemType Directory -Path $distRoot -Force
 $stageRoot = Join-Path $distRoot ('.package-' + [guid]::NewGuid().ToString('N'))
 $payload = Join-Path $stageRoot 'payload'
 $null = New-Item -ItemType Directory -Path $payload
-$packageName = "CHRCloudLibrary-$version.pext"
+$packageName = "CloudStorageIntegration-$version.pext"
 $packagePath = Join-Path $distRoot $packageName
 try {
-    foreach ($fileName in @('CHRCloudLibrary.dll', 'extension.yaml', 'icon.png')) {
+    foreach ($fileName in @('CloudStorageIntegration.dll', 'extension.yaml', 'icon.png')) {
         $sourcePath = Join-Path $projectOutput $fileName
         if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) { throw "Required extension file missing: $sourcePath" }
         Copy-Item -LiteralPath $sourcePath -Destination $payload
@@ -77,19 +77,19 @@ try {
         wpfResources = @($verified.WpfResources)
         runtimeTested = $false
     }
-    $receiptName = "CHRCloudLibrary-$version.build.json"
+    $receiptName = "CloudStorageIntegration-$version.build.json"
     $checksumName = "$packageName.sha256"
     $encoding = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText((Join-Path $stageRoot $receiptName), ($receipt | ConvertTo-Json -Depth 5), $encoding)
     [System.IO.File]::WriteAllText((Join-Path $stageRoot $checksumName), "$($verified.Sha256)  $packageName`n", $encoding)
 
     if ($DebugSymbols) {
-        $pdbPath = Join-Path $projectOutput 'CHRCloudLibrary.pdb'
+        $pdbPath = Join-Path $projectOutput 'CloudStorageIntegration.pdb'
         if (-not (Test-Path -LiteralPath $pdbPath -PathType Leaf)) { throw 'Debug symbols were requested but the PDB is missing.' }
         $symbols = Join-Path $stageRoot 'symbols'
         $null = New-Item -ItemType Directory -Path $symbols
         Copy-Item -LiteralPath $pdbPath -Destination $symbols
-        $symbolsName = "CHRCloudLibrary-$version-debug-symbols.zip"
+        $symbolsName = "CloudStorageIntegration-$version-debug-symbols.zip"
         [System.IO.Compression.ZipFile]::CreateFromDirectory($symbols, (Join-Path $stageRoot $symbolsName))
         Move-Item -LiteralPath (Join-Path $stageRoot $symbolsName) -Destination (Join-Path $distRoot $symbolsName) -Force
     }

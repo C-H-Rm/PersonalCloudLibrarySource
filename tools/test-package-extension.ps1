@@ -60,11 +60,11 @@ try {
     Write-Host 'PASS valid built plugin with compiled WPF resources'
     $script:passed++
 
-    Test-RejectedPackage 'missing-module' { param($z) $z.GetEntry('CHRCloudLibrary.dll').Delete() } 'Required package entry missing'
+    Test-RejectedPackage 'missing-module' { param($z) $z.GetEntry('CloudStorageIntegration.dll').Delete() } 'Required package entry missing'
     Test-RejectedPackage 'missing-manifest' { param($z) $z.GetEntry('extension.yaml').Delete() } 'Required package entry missing'
     Test-RejectedPackage 'missing-icon' { param($z) $z.GetEntry('icon.png').Delete() } 'Required package entry missing'
     Test-RejectedPackage 'missing-localization' { param($z) $z.GetEntry('Localization/en_US.xaml').Delete() } 'Required package entry missing'
-    Test-RejectedPackage 'bad-module' { param($z) Set-ZipText $z 'CHRCloudLibrary.dll' 'Not a managed DLL' } 'Bad IL format|BadImageFormat|invalid|bad format|format of the file'
+    Test-RejectedPackage 'bad-module' { param($z) Set-ZipText $z 'CloudStorageIntegration.dll' 'Not a managed DLL' } 'Bad IL format|BadImageFormat|invalid|bad format|format of the file'
     Test-RejectedPackage 'unexpected-sdk' { param($z) Set-ZipText $z 'Playnite.SDK.dll' 'must not be bundled' } 'Unexpected package entry'
     Test-RejectedPackage 'unexpected-credentials' { param($z) Set-ZipText $z 'auth.json' '{"test":"not a secret"}' } 'Unexpected package entry'
     Test-RejectedPackage 'traversal' { param($z) Set-ZipText $z '../outside.txt' 'test' } 'Unexpected package entry'

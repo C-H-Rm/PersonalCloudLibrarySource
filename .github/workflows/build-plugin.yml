@@ -156,7 +156,7 @@ jobs:
         id: upload_info
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: PersonalCloudLibrarySource-build-info
+          name: CloudStorageIntegration-build-info
           path: |
             ${{ steps.package.outputs.receipt_path }}
             ${{ steps.package.outputs.checksum_path }}

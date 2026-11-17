@@ -1,8 +1,8 @@
-Id: CHRCloudLibrary_402561c2-ea33-4c60-a8f8-ec25e997a1d5
+Id: CloudStorageIntegration_402561c2-ea33-4c60-a8f8-ec25e997a1d5
 Name: Cloud Storage Integration
 Author: "The Bearclaw & ztwslayer (standalone fork)"
 Version: 0.2.0
-Module: CHRCloudLibrary.dll
+Module: CloudStorageIntegration.dll
 Type: GameLibrary
 Icon: icon.png
 Links:

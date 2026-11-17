@@ -42,7 +42,7 @@ def artifacts(directory, sha):
     if len(packages) != 1:
         raise ValueError('Exactly one installable .pext is required')
     package = packages[0]
-    if not re.fullmatch(r'CHRCloudLibrary-[0-9]+(?:\.[0-9]+){2,3}\.pext', package.name):
+    if not re.fullmatch(r'CloudStorageIntegration-[0-9]+(?:\.[0-9]+){2,3}\.pext', package.name):
         raise ValueError('Unexpected package filename')
     receipt = directory / (package.stem + '.build.json')
     checksum = directory / (package.name + '.sha256')
@@ -54,7 +54,7 @@ def artifacts(directory, sha):
         raise ValueError('Package hash, source commit or clean-build receipt does not match')
     with zipfile.ZipFile(package) as archive:
         names = archive.namelist()
-        required = {'CHRCloudLibrary.dll', 'extension.yaml', 'icon.png'}
+        required = {'CloudStorageIntegration.dll', 'extension.yaml', 'icon.png'}
         if (not required.issubset(names) or len(names) != len(set(names))
                 or any(n not in required and not n.startswith('Localization/') for n in names)
                 or any('..' in n.split('/') or '\\' in n or n.startswith('/') for n in names)
@@ -102,7 +102,7 @@ def publish(directory, env=None):
     expected = {p.name for p in files}
     for asset in api(f"releases/{release['id']}/assets?per_page=100"):
         if (asset['name'] not in expected and re.fullmatch(
-                r'CHRCloudLibrary-[0-9.]+\.(?:pext(?:\.sha256)?|build\.json)', asset['name'])):
+                r'CloudStorageIntegration-[0-9.]+\.(?:pext(?:\.sha256)?|build\.json)', asset['name'])):
             api(f"releases/assets/{asset['id']}", 'DELETE')
     notes = (f'{MARKER}\nAutomated prerelease from `main` at `{sha}`.\n\n'
              f'[Verified Windows build](https://github.com/{REPOSITORY}/actions/runs/{run_id})\n\n'
