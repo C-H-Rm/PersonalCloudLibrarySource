@@ -211,7 +211,9 @@ namespace CHRCL
         {
             var panel = new StackPanel { Margin = new Thickness(8, 7, 8, 7) };
             panel.Children.Add(new TextBlock { Text = title, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
-            panel.Children.Add(new TextBlock { Text = record.OperationKind + " — " + record.Phase, Opacity = 0.8, Margin = new Thickness(0, 2, 0, 4) });
+            var kind = FormatDownloadLabel(record.OperationKind);
+            var phase = FormatDownloadLabel(record.Phase);
+            panel.Children.Add(new TextBlock { Text = kind == phase ? kind : kind + " — " + phase, Opacity = 0.8, Margin = new Thickness(0, 2, 0, 4) });
             if (record.Active)
             {
                 var unknown = !record.Percentage.HasValue;
@@ -239,6 +241,9 @@ namespace CHRCL
             }
             return new Border { BorderBrush = SystemColors.ControlDarkBrush, BorderThickness = new Thickness(0, 0, 0, 1), Child = panel };
         }
+
+        private static string FormatDownloadLabel(string label) =>
+            label == "DownloadingMods" || label == "ModDownload" ? "Mod download" : label;
 
         private static UIElement EmptyRow(string text) => new TextBlock { Text = text, Margin = new Thickness(12), Opacity = 0.7 };
         private static string FormatPhaseSize(string label, long? completed, long? total)
