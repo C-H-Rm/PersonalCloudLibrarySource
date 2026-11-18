@@ -18,6 +18,8 @@ namespace PersonalCloudLibrarySource
             targetDirectory = Path.GetFullPath(targetDirectory);
             var parent = Path.GetDirectoryName(targetDirectory);
             if (string.IsNullOrWhiteSpace(parent)) throw new InvalidOperationException("Mod destination has no parent directory.");
+            cancellationToken.ThrowIfCancellationRequested();
+            RejectDirectoryLinks(targetDirectory);
             Directory.CreateDirectory(parent);
             if (Directory.Exists(targetDirectory) && Directory.EnumerateFileSystemEntries(targetDirectory).Any())
                 throw new IOException("Mod destination is not empty; ZIP install refused to overwrite existing user files.");
@@ -74,15 +76,21 @@ namespace PersonalCloudLibrarySource
                         using (var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                         {
                             var buffer = new byte[81920]; int read;
+                            var remaining = entry.Length;
                             while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
                             {
                                 cancellationToken.ThrowIfCancellationRequested();
+                                remaining -= read;
+                                if (remaining < 0) throw new InvalidDataException("ZIP entry exceeds its declared size: " + entry.FullName);
                                 output.Write(buffer, 0, read);
                             }
+                            if (remaining != 0) throw new InvalidDataException("ZIP entry is truncated: " + entry.FullName);
                         }
                     }
                 }
                 cancellationToken.ThrowIfCancellationRequested();
+                RejectDirectoryLinks(targetDirectory);
+                RejectDirectoryLinks(stage);
                 if (Directory.Exists(targetDirectory))
                 {
                     if (Directory.EnumerateFileSystemEntries(targetDirectory).Any())
@@ -104,6 +112,19 @@ namespace PersonalCloudLibrarySource
             {
                 if (Directory.Exists(stage)) Directory.Delete(stage, true);
                 if (Directory.Exists(displacedEmpty)) Directory.Delete(displacedEmpty);
+            }
+        }
+
+        internal static void RejectDirectoryLinks(string directory)
+        {
+            for (var path = new DirectoryInfo(directory); path != null; path = path.Parent)
+            {
+                FileAttributes attributes;
+                try { attributes = File.GetAttributes(path.FullName); }
+                catch (FileNotFoundException) { continue; }
+                catch (DirectoryNotFoundException) { continue; }
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new IOException("ZIP mod installation does not follow directory links or junctions: " + path.FullName);
             }
         }
 

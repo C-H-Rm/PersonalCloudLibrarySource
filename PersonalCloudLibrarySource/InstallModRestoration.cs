@@ -25,9 +25,7 @@ namespace PersonalCloudLibrarySource
             return async (token, progress, unusedRecovery) =>
             {
                 var currentSettings = settings.Settings;
-                if (currentSettings?.Enabled == true && currentSettings.EnableModSync)
-                    SetInstallModSyncPending(game.Id, true);
-                var result = await Task.Run(() =>
+                return await Task.Run(() =>
                 {
                     token.ThrowIfCancellationRequested();
                     if (currentSettings == null || !currentSettings.Enabled || !currentSettings.EnableModSync) return null;
@@ -41,6 +39,7 @@ namespace PersonalCloudLibrarySource
                         if (!current.RemoteFolder.StartsWith(prefix, StringComparison.Ordinal))
                             throw new InvalidOperationException("The current cloud mod remote changed.");
                         var remoteZip = current.RemoteFolder.Substring(prefix.Length) + ".zip";
+                        InstallZipModArchive.RejectDirectoryLinks(current.LocalFolder);
                         var localParent = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(current.LocalFolder));
                         if (string.IsNullOrWhiteSpace(localParent)) throw new InvalidOperationException("Mod destination has no parent directory.");
                         System.IO.Directory.CreateDirectory(localParent);
@@ -65,9 +64,6 @@ namespace PersonalCloudLibrarySource
                     }
                     finally { modSyncGate.Release(); }
                 }, token);
-                // ZIP mode is a download-only prototype: deliberately do not enqueue automatic
-                // post-install bisync, which could upload the ZIP or propagate stale deletions.
-                return result;
             };
         }
 

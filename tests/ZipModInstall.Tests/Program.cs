@@ -24,6 +24,7 @@ internal static class Program
             Test("case-insensitive collisions refused", CaseCollisionRejected);
             Test("duplicate entries refused", DuplicateRejected);
             Test("file/directory collisions and symlink entries refused", EntryTypeGuards);
+            Test("destination and its parents are never followed through links", LinkedDestinationRejected);
             Test("corrupt ZIP refused without partial install", CorruptArchiveRejected);
             Test("cancelled extraction leaves destination and staging clean", CancellationRejected);
             Test("real rclone local-backend download then install", RealRcloneDownload);
@@ -102,6 +103,17 @@ internal static class Program
         if (Directory.Exists(Path.Combine(root, "file-dir-collision")) || Directory.Exists(Path.Combine(root, "symlink-target")))
             throw new Exception("unsafe ZIP committed a destination");
         NoStage();
+    }
+    private static void LinkedDestinationRejected()
+    {
+        if (!OperatingSystem.IsLinux()) return; // Windows CI need not have symlink privileges.
+        var outside = Directory.CreateDirectory(Path.Combine(root, "outside-mod-root")).FullName;
+        var link = Path.Combine(root, "linked-mod-root");
+        Directory.CreateSymbolicLink(link, outside);
+        var archive = MakeZip(("file.dat", "would escape"));
+        Throws<IOException>(() => InstallZipModArchive.Install(archive, link, CancellationToken.None));
+        Throws<IOException>(() => InstallZipModArchive.Install(archive, Path.Combine(link, "nested", "Mods"), CancellationToken.None));
+        if (Directory.EnumerateFileSystemEntries(outside).Any()) throw new Exception("archive touched data through a directory link");
     }
     private static void CorruptArchiveRejected()
     {

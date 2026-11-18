@@ -33,8 +33,18 @@ namespace PersonalCloudLibrarySource
 
         public override void OnGameStarting(OnGameStartingEventArgs args)
         {
-            // Optional mods are downloaded only by the install controller (and its
-            // install-only Retry mods action). Never fetch or synchronize mods on launch.
+            // Guard an active install without starting any mod work from a launch.
+            if (!args.CancelStartup && args.Game?.PluginId == Id &&
+                InstallProgressState.Shared.Get(args.Game.Id)?.Active == true)
+            {
+                args.CancelStartup = true;
+                OnModUi(() =>
+                {
+                    playniteApi.Notifications.Add(new NotificationMessage("pcls-install-running-" + args.Game.Id,
+                        "Wait for the game and mod installation to finish before playing.", NotificationType.Info));
+                    return true;
+                });
+            }
         }
 
         public override void OnGameStopped(OnGameStoppedEventArgs args)
