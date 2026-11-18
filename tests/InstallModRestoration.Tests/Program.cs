@@ -116,13 +116,16 @@ internal static class Program
             using (var writer = new StreamWriter(zip.CreateEntry("config/settings.ini").Open())) writer.Write("nested");
         }
         File.WriteAllText(Path.Combine(f.Cloud, "remote-marker.txt"), "stay remote");
+        var originalZip = File.ReadAllBytes(zipPath);
         var callback = f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings());
         var result = await callback(CancellationToken.None, null, false);
         Check(result.Success, result.Message);
         Check(File.ReadAllText(Path.Combine(f.Local, "plugin.dll")) == "zip-root", "archive root not mapped directly to modPath");
         Check(File.ReadAllText(Path.Combine(f.Local, "config", "settings.ini")) == "nested", "nested archive entry missing");
         Check(File.ReadAllText(Path.Combine(f.Cloud, "remote-marker.txt")) == "stay remote", "cloud source changed");
-        Check(!Directory.Exists(f.State), "ZIP-only install ran loose-file inventory or bisync state setup");
+        Check(File.ReadAllBytes(zipPath).SequenceEqual(originalZip), "restore changed the cloud ZIP");
+        Check(Directory.GetFileSystemEntries(f.State).Select(Path.GetFileName).SequenceEqual(new[] { "upload-baseline.txt" }),
+            "ZIP restore should seed only the upload baseline, not initialize bisync state");
     }
 
     private static async Task MissingZip()
@@ -443,6 +446,7 @@ namespace PersonalCloudLibrarySource
         private PersonalCloudLibrarySourceSettingsViewModel settings;
         private readonly SemaphoreSlim modSyncGate = new SemaphoreSlim(1, 1);
         private readonly ModSyncService modSyncService = new ModSyncService();
+        private readonly ModZipUploadService modZipUploadService = new ModZipUploadService();
         private readonly RcloneFileCopier rcloneFileCopier = new RcloneFileCopier();
         public PostInstallModSyncQueue Queue => postInstallModSync;
         public void BeginBackground(bool resume = false) => StartInstallBackgroundModSync(Harness.Game, resume);
