@@ -47,7 +47,9 @@ Check(!state.Cancel(game, first.OperationId) && !second.CancellationToken.IsCanc
 Check(state.Cancel(game, second.OperationId) && second.CancellationToken.IsCancellationRequested, "cancellation targets the exact active session");
 second.Finish("Failed", "Mods need retry", () => state.TryBegin(game, out _));
 Check(state.Get(game).CanRetry, "mod-only failure can offer a separate retry action");
-Check(state.Retry(game) && !state.Retry(game), "retry acquires a fresh session and cannot run twice");
+Check(!state.Retry(game, first.OperationId) && state.Get(game).OperationId == second.OperationId,
+    "a historical row cannot retry a newer failure");
+Check(state.Retry(game, second.OperationId) && !state.Retry(game, second.OperationId), "retry acquires a fresh session and cannot run twice");
 concurrent.Report("Downloading", 0, null, double.NaN, double.NaN);
 Check(state.Get(other).Percentage == null && state.Get(other).BytesPerSecond == 0, "invalid telemetry is not rendered as a fake percentage or speed");
 concurrent.Dispose();

@@ -11,20 +11,19 @@ For a configured `RcloneContentRoot` of `games`, literal game ID `a1b2`, and `mo
 => <rclone remote>:games/mods/a1b2.zip
 ```
 
-The ZIP archive root is the content of `modPath`: `mod.dll` installs as `D:\\Games\\Example\\Mods\\mod.dll`, and `nested\\settings.ini` installs beneath `Mods\\nested`. Do not put a wrapping `mods/`, game-ID, or other top-level directory inside the ZIP. The game ID is used literally; this prototype does not derive a name from the title.
+The ZIP archive root is the content of `modPath`: `mod.dll` installs directly in `Mods`, and `nested/settings.ini` installs beneath `Mods/nested`. Do not put a wrapping `mods/` or game-ID directory inside the ZIP. Use the literal game ID, not the game title.
 
 The optional download runs only for the existing enabled RcloneRemote mod setting and nonblank live `modPath`; the live manifest must still match the imported mapping. An absent/unreadable archive or invalid ZIP reports an optional mod failure while leaving the successfully installed game installed. There is no fallback to loose-file mod folders.
 
 Before extraction, the destination must not exist or must be an empty directory. Existing populated mod paths are refused, never merged or overwritten. Extraction occurs in an owned sibling stage and is committed only after the whole ZIP validates and extracts. Cancellation/corruption/unsafe names do not commit staged files. ZIP paths reject traversal, rooted/drive paths, backslashes, Windows-invalid/device names, duplicate and case-insensitive collisions, and symlink/reparse entries. Temporary archive/stage files are cleaned up; pre-existing user data is never automatically cleaned up.
 
-## Deliberately disabled for this prototype
+## Download-only behavior
 
 - No ordinary loose-file mod inventory/listing is run for the initial restore.
 - Automatic post-install two-way bisync is not enqueued. Launch, exit, manual game actions, and background callbacks do not start cloud mod operations. The legacy loose-folder implementation remains in source for rollback only; it is not exposed by the shipped lifecycle.
-- No cloud ZIP creation or migration is performed. Prepare the ZIP manually in an isolated test remote.
+- No cloud ZIP creation or migration is performed. Prepare and upload the ZIP separately.
+- If the ZIP step fails, the game remains installed. In the Downloads window, use **History → Retry mods** for the current failure after correcting the cause. This does not repeat the game download.
 
-## Test safety and use
+## Verification
 
-Use only an isolated local rclone remote. Do not point this prototype at real Nextcloud or a production mod folder. Install only in a disposable Playnite profile/library where the resolved modPath is absent/empty. A populated target intentionally fails instead of risking data loss.
-
-The test suite exercises ZIP extraction guards and invokes actual rclone `copyto` against a disposable local filesystem source, then installs the downloaded bytes. It is not a Windows Playnite runtime/UI test, a Nextcloud test, or a verification of custom theme rendering. The private `.pext` is a candidate test artifact, not a published release.
+The test suite exercises ZIP extraction guards and uses actual rclone `copyto` against a disposable filesystem source. It does not verify rendered Playnite UI or a live Nextcloud instance.

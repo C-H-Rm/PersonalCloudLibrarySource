@@ -147,12 +147,15 @@ namespace PersonalCloudLibrarySource
             return session != null && session.OperationId == operationId && session.Cancel();
         }
 
-        public bool Retry(Guid gameId)
+        public bool Retry(Guid gameId) => Retry(gameId, null);
+
+        public bool Retry(Guid gameId, Guid? operationId)
         {
             Action retry;
             lock (gate)
             {
-                if (!entries.TryGetValue(gameId, out var entry) || entry.Session != null) return false;
+                if (!entries.TryGetValue(gameId, out var entry) || entry.Session != null ||
+                    (operationId.HasValue && entry.Snapshot.OperationId != operationId.Value)) return false;
                 retry = entry.Retry;
                 entry.Retry = null;
             }

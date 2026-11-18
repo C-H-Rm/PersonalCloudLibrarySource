@@ -226,7 +226,16 @@ namespace CHRCL
             {
                 panel.Children.Add(new TextBlock { Text = FormatPhaseSize("Game download", record.GameCompletedBytes, record.GameTotalBytes), Opacity = 0.72, FontSize = 11 });
                 panel.Children.Add(new TextBlock { Text = FormatPhaseSize("Mod download", record.ModCompletedBytes, record.ModTotalBytes), Opacity = 0.72, FontSize = 11 });
-                panel.Children.Add(new TextBlock { Text = FormatProgress(record) + " · " + record.UpdatedUtc.ToLocalTime().ToString("g", CultureInfo.CurrentCulture), Opacity = 0.72, FontSize = 11 });
+                panel.Children.Add(new TextBlock { Text = record.UpdatedUtc.ToLocalTime().ToString("g", CultureInfo.CurrentCulture), Opacity = 0.72, FontSize = 11 });
+                var live = PersonalCloudLibrarySource.InstallProgressState.Shared.Get(record.GameId);
+                if (live?.OperationId == record.OperationId && !string.IsNullOrWhiteSpace(live.Message))
+                    panel.Children.Add(new TextBlock { Text = live.Message, TextWrapping = TextWrapping.Wrap });
+                if (live?.OperationId == record.OperationId && live.CanRetry)
+                {
+                    var retry = new Button { Content = live.RetryLabel, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 4, 0, 0) };
+                    retry.Click += (_, __) => { retry.IsEnabled = false; PersonalCloudLibrarySource.InstallProgressState.Shared.Retry(record.GameId, record.OperationId); };
+                    panel.Children.Add(retry);
+                }
             }
             return new Border { BorderBrush = SystemColors.ControlDarkBrush, BorderThickness = new Thickness(0, 0, 0, 1), Child = panel };
         }
