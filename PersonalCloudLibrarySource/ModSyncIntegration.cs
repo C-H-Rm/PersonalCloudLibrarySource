@@ -33,32 +33,13 @@ namespace PersonalCloudLibrarySource
 
         public override void OnGameStarting(OnGameStartingEventArgs args)
         {
-            if (args.CancelStartup) return;
-            var installStatus = args.Game == null ? null : InstallProgressState.Shared.Get(args.Game.Id);
-            if (args.Game?.PluginId == Id && installStatus?.Active == true && installStatus.Phase != "BackgroundModSync")
-            {
-                args.CancelStartup = true;
-                NotifyModSync(args.Game, new ModSyncResult { Message = "Installation or mod restoration is still active. Wait for it to finish or cancel mod restoration first." });
-                return;
-            }
-            if (args.Game?.PluginId == Id && DeferInstallBackgroundModsForLaunch(args.Game, out var stopped))
-            {
-                args.CancelStartup = !stopped;
-                if (!stopped) NotifyModSync(args.Game, new ModSyncResult { Message = "Background mod work is stopping. Try Play again once it finishes." });
-                return; // Use just-downloaded mods; do not restart foreground bisync here.
-            }
-            var result = RunModSync(args.Game, false, false, false);
-            // Cancel means cancel this launch, not start silently with unchecked mods.
-            if (result != null && result.Cancelled) { args.CancelStartup = true; return; }
-            if (result != null && (!result.Success || result.HasConflicts))
-                args.CancelStartup = !ConfirmModSync("Mods are not verified ready.\n\n" + ShortMessage(result.Message) + "\n\nStart the game anyway?");
+            // Optional mods are downloaded only by the install controller (and its
+            // install-only Retry mods action). Never fetch or synchronize mods on launch.
         }
 
         public override void OnGameStopped(OnGameStoppedEventArgs args)
         {
-            if (args.Game?.PluginId == Id && (postInstallModSync.Contains(args.Game.Id) || HasPendingInstallModSync(args.Game.Id)))
-            { StartInstallBackgroundModSync(args.Game, true); return; }
-            RunModSync(args.Game, true, false, false);
+            // No automatic cloud mod operation is scheduled when a game exits.
         }
 
         public override void OnApplicationStopped(OnApplicationStoppedEventArgs args)

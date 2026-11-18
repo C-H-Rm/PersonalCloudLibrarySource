@@ -267,13 +267,13 @@
                        TextWrapping="Wrap"
                        Margin="22,0,0,16"/>
 
-            <TextBlock Text="Optional two-way mod synchronization"
+            <TextBlock Text="Optional cloud mod ZIP download"
                        FontSize="15" FontWeight="Bold" Margin="0,0,0,10"/>
-            <CheckBox Content="Enable mod sync before play, after play, and from the game menu"
+            <CheckBox Content="Download the configured mod ZIP during game installation"
                       IsChecked="{Binding Settings.EnableModSync}" Margin="0,0,0,6"/>
-            <TextBlock Text="RcloneRemote only. Entries need modPath in the manifest. Mods sync separately to Rclone content root / mods / game ID, including deletions. First linkage and clearing an entire mod folder require confirmation. Missing folders pause sync rather than erasing cloud mods."
+            <TextBlock Text="RcloneRemote only. Entries need modPath in the live manifest. The archive is read from Rclone content root / mods / literal game ID.zip and extracted into modPath. ZIP download is install-only, preserves existing local files by refusing non-empty destinations, and never uploads, deletes, or synchronizes mods on game launch, exit, or from a manual menu."
                        TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,10"/>
-            <TextBlock Text="Mod sync timeout (seconds, separate from manifest/copy timeout):"
+            <TextBlock Text="Mod ZIP download timeout (seconds, separate from manifest/copy timeout):"
                        FontWeight="SemiBold" Margin="0,0,0,4"/>
             <TextBox Text="{Binding Settings.ModSyncTimeoutSeconds, UpdateSourceTrigger=PropertyChanged}"
                      MinWidth="120" Margin="0,0,0,16"/>

@@ -25,7 +25,7 @@ Adoption does not download, upload, bisync, clear folders or change game-install
 
 ## Download center
 
-The Desktop top-panel down-arrow item opens one modeless window. It observes the same per-operation state as the inline game-details bar; it is not another download engine or a queue scheduler. Live operations are visible across games, without selecting each one. Background mod synchronization is labelled separately from downloading.
+The Desktop top-panel down-arrow item opens one modeless window. It observes the same per-operation state as the inline game-details bar; it is not another download engine or a queue scheduler. Live operations are visible across games, without selecting each one. Optional mod ZIP downloads are identified separately from base-game downloads.
 
 Active rows show available real progress and transfer metrics. Unknown totals are indeterminate. History distinguishes successful, failed, cancelled and interrupted attempts; a retry is another operation, not a rewrite of the previous result. A bounded history survives restarts. An operation left active at shutdown is shown as interrupted on the next start, not falsely resumed. History begins with this version; earlier builds did not record it.
 

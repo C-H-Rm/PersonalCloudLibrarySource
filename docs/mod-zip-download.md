@@ -1,6 +1,6 @@
-# Private ZIP mod install prototype
+# ZIP mod downloads during installation
 
-This test-only package changes optional post-install mod restoration to download one archive using the configured rclone executable and remote. It does not alter the regular game-file transfer or mutate a live cloud service as part of its build/tests.
+This feature downloads one optional archive during game installation using the configured rclone executable and remote. It does not alter the regular game-file transfer or require any cloud-side writes.
 
 ## Exact archive contract
 
@@ -20,7 +20,7 @@ Before extraction, the destination must not exist or must be an empty directory.
 ## Deliberately disabled for this prototype
 
 - No ordinary loose-file mod inventory/listing is run for the initial restore.
-- Automatic post-install two-way bisync is not enqueued. This prevents uploading the ZIP or applying a stale folder baseline/deletions. Manual mod menu operations otherwise remain the existing loose-folder behavior; do not use those against this prototype archive mapping.
+- Automatic post-install two-way bisync is not enqueued. Launch, exit, manual game actions, and background callbacks do not start cloud mod operations. The legacy loose-folder implementation remains in source for rollback only; it is not exposed by the shipped lifecycle.
 - No cloud ZIP creation or migration is performed. Prepare the ZIP manually in an isolated test remote.
 
 ## Test safety and use

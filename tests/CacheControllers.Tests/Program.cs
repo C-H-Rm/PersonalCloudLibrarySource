@@ -311,13 +311,8 @@ class Program
             using var f = new Fixture();
             var plugin = f.MenuPlugin(System.Text.Json.JsonSerializer.Serialize(new { items = new[] { new { id = "test", modPath = path } } }));
             var menu = plugin.GetGameMenuItems(new GetGameMenuItemsArgs { Games = new[] { f.Game } }).ToList();
-            Check(menu.Count == (string.IsNullOrWhiteSpace(path) ? 0 : 2), "wrong menu visibility");
-            Check(plugin.SyncCalls == 0, "opening menu triggered synchronization");
-            if (menu.Count == 2)
-            {
-                menu[0].Action(null); Check(plugin.SyncCalls == 1 && !plugin.Relink, "wrong sync action");
-                menu[1].Action(null); Check(plugin.SyncCalls == 2 && plugin.Relink, "wrong relink action");
-            }
+            Check(menu.Count == 0, "ZIP-only mode exposed manual cloud synchronization");
+            Check(plugin.SyncCalls == 0, "manual sync entrypoint was invoked");
         });
         foreach (var json in new[] { "{}", "{broken", "{\"items\":[]}", "{\"items\":[null]}", "{\"items\":[{\"id\":\"other\",\"modPath\":\"Mods\"}]}", "{\"items\":[{\"id\":\"test\",\"modPath\":\"Mods\"},{\"id\":\"TEST\",\"modPath\":\"Mods\"}]}" })
         Test("invalid or ambiguous cached mod configuration hides menu: " + json, () =>
@@ -350,7 +345,7 @@ class Program
         Test("imported game IDs remain case insensitive", () =>
         {
             using var f = new Fixture(); var plugin = f.MenuPlugin("{\"items\":[null,{\"id\":\"TEST\",\"modPath\":\"Mods\"}]}");
-            Check(plugin.GetGameMenuItems(new GetGameMenuItemsArgs { Games = new[] { f.Game } }).Count() == 2, "matching entry was hidden");
+            Check(!plugin.GetGameMenuItems(new GetGameMenuItemsArgs { Games = new[] { f.Game } }).Any(), "legacy sync actions remained exposed");
         });
         Test("cloud mod folders use the literal manifest ID", () => {
             Check(ModSyncService.ResolveCloudModFolder("Library/files", "skyrim-se") == "Library/files/mods/skyrim-se", "wrong ID folder");
