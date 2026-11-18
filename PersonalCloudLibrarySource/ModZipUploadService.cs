@@ -12,8 +12,6 @@ namespace PersonalCloudLibrarySource
     public sealed class ModZipUploadService
     {
         private readonly ModSyncProcess process = new ModSyncProcess();
-        private const int MaxFiles = 20000;
-        private const long MaxExpandedBytes = 8L * 1024 * 1024 * 1024;
 
         public ModSyncResult UploadIfChanged(ModSyncRequest request, bool beforeUninstall = false)
         {
@@ -27,14 +25,14 @@ namespace PersonalCloudLibrarySource
                 {
                     var files = ListFiles(request.LocalFolder);
                     if (files.Length == 0) return new ModSyncResult { Success = false, Message = "Empty mod folders are not uploaded; the previous cloud ZIP is preserved." };
-                    if (files.Length > MaxFiles) throw new InvalidOperationException("Mod folder exceeds the safe ZIP file-count limit.");
+
                     ValidateNames(files.Select(path => Relative(request.LocalFolder, path).Replace(Path.DirectorySeparatorChar, '/')));
                     var total = 0L;
                     foreach (var file in files)
                     {
                         var length = new FileInfo(file).Length;
-                        if (length > MaxExpandedBytes - total)
-                            throw new InvalidOperationException("Mod folder exceeds the safe ZIP expanded-size limit.");
+                        if (length > InstallZipModArchive.MaxExpandedBytes - total)
+                            throw new InvalidOperationException($"Mod folder exceeds the ZIP limit of {InstallZipModArchive.MaxExpandedBytes / (1024L * 1024 * 1024)} GiB before compression.");
                         total += length;
                     }
                     var snapshot = Snapshot(request.LocalFolder, files, request.CancellationToken);
@@ -51,7 +49,10 @@ namespace PersonalCloudLibrarySource
                     if (stored == null && RemoteExists(request, remoteZip))
                         throw new InvalidOperationException("An existing cloud mod ZIP has no matching local upload baseline. It was preserved; restore/review it before enabling upload.");
                     request.CancellationToken.ThrowIfCancellationRequested();
+                    InstallZipModArchive.RequireFreeSpace(request.StateDirectory, total, "create");
                     archive = Path.Combine(request.StateDirectory, "upload-" + Guid.NewGuid().ToString("N") + ".zip");
+                    var buffer = new byte[81920];
+                    var remainingBytes = total;
                     using (var zip = ZipFile.Open(archive, ZipArchiveMode.Create))
                     {
                         foreach (var file in files)
@@ -59,7 +60,18 @@ namespace PersonalCloudLibrarySource
                             request.CancellationToken.ThrowIfCancellationRequested();
                             var entry = zip.CreateEntry(Relative(request.LocalFolder, file).Replace(Path.DirectorySeparatorChar, '/'), CompressionLevel.Optimal);
                             using (var input = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read))
-                            using (var output = entry.Open()) input.CopyTo(output);
+                            using (var output = entry.Open())
+                            {
+                                int read;
+                                while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+                                {
+                                    request.CancellationToken.ThrowIfCancellationRequested();
+                                    if (read > remainingBytes)
+                                        throw new IOException("Mod files grew while the ZIP was being built; no cloud update was published.");
+                                    remainingBytes -= read;
+                                    output.Write(buffer, 0, read);
+                                }
+                            }
                         }
                     }
                     if (Snapshot(request.LocalFolder, ListFiles(request.LocalFolder), request.CancellationToken) != snapshot)
@@ -179,13 +191,18 @@ namespace PersonalCloudLibrarySource
             var pending = new Stack<string>(); pending.Push(root);
             var files = new List<string>();
             while (pending.Count != 0)
-                foreach (var path in Directory.GetFileSystemEntries(pending.Pop()))
+                foreach (var path in Directory.EnumerateFileSystemEntries(pending.Pop()))
                 {
                     var entryAttributes = File.GetAttributes(path);
                     if ((entryAttributes & FileAttributes.ReparsePoint) != 0)
                         throw new InvalidOperationException("Mod ZIP upload refuses linked folders/files.");
                     if ((entryAttributes & FileAttributes.Directory) != 0) pending.Push(path);
-                    else files.Add(path);
+                    else
+                    {
+                        if (files.Count == InstallZipModArchive.MaxEntries)
+                            throw new InvalidOperationException($"Mod folder exceeds the ZIP limit of {InstallZipModArchive.MaxEntries:N0} files.");
+                        files.Add(path);
+                    }
                 }
             return files.OrderBy(path => Relative(root, path), StringComparer.Ordinal).ToArray();
         }

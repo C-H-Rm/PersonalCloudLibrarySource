@@ -20,7 +20,7 @@ Before extraction, the destination must not exist or must be an empty directory.
 ## Download-only behavior
 
 - No ordinary loose-file mod inventory/listing is run for the initial restore.
-- Archives are limited to 100,000 entries and 64 GiB expanded. On local drives, extraction also checks for enough free space with a 1 GiB reserve after the ZIP has downloaded. That check is not a guarantee against concurrent disk usage.
+- Backup and restore share the same limits: 100,000 ZIP entries and 64 GiB uncompressed. On local drives, ZIP creation and extraction check for enough free space while leaving a 1 GiB reserve. This check is not a guarantee against concurrent disk usage.
 - No automatic post-install bisync, launch/exit transfers, or loose-folder migration.
 - If the ZIP step fails, the game remains installed. In the Downloads window, use **History → Retry mods** for the current failure after correcting the cause. This does not repeat the game download.
 

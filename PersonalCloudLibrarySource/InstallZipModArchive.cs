@@ -10,8 +10,8 @@ namespace PersonalCloudLibrarySource
     /// <summary>Safely installs an archive whose root is the contents of the modPath folder.</summary>
     public static class InstallZipModArchive
     {
-        private const int MaxEntries = 100_000;
-        private const long MaxExpandedBytes = 64L * 1024 * 1024 * 1024;
+        internal const int MaxEntries = 100_000;
+        internal const long MaxExpandedBytes = 64L * 1024 * 1024 * 1024;
         private const long FreeSpaceReserve = 1024L * 1024 * 1024;
 
         public static void Install(string archivePath, string targetDirectory, CancellationToken cancellationToken)
@@ -77,11 +77,7 @@ namespace PersonalCloudLibrarySource
                         if (unixMode == 0xA000 || (entry.ExternalAttributes & 0x400) != 0)
                             throw new InvalidDataException("ZIP links and reparse-point entries are not supported: " + entry.FullName);
                     }
-                    var driveRoot = Path.GetPathRoot(parent);
-                    // DriveInfo supports drive letters, not UNC shares. The absolute archive caps apply to both.
-                    if (!driveRoot.StartsWith(@"\\", StringComparison.Ordinal) && declaredBytes > 0 &&
-                        declaredBytes > Math.Max(0L, new DriveInfo(driveRoot).AvailableFreeSpace - FreeSpaceReserve))
-                        throw new IOException("Not enough free space to extract the mod ZIP while leaving a 1 GiB reserve.");
+                    RequireFreeSpace(parent, declaredBytes, "extract");
                     RejectDirectoryLinks(targetDirectory);
                     Directory.CreateDirectory(stage);
                     var remainingTotal = declaredBytes;
@@ -139,6 +135,15 @@ namespace PersonalCloudLibrarySource
                 if (Directory.Exists(stage)) Directory.Delete(stage, true);
                 if (Directory.Exists(displacedEmpty)) Directory.Delete(displacedEmpty);
             }
+        }
+
+        internal static void RequireFreeSpace(string directory, long bytes, string operation)
+        {
+            var driveRoot = Path.GetPathRoot(directory);
+            // DriveInfo supports drive letters, not UNC shares. Archive caps still apply to both.
+            if (!driveRoot.StartsWith(@"\\", StringComparison.Ordinal) && bytes > 0 &&
+                bytes > Math.Max(0L, new DriveInfo(driveRoot).AvailableFreeSpace - FreeSpaceReserve))
+                throw new IOException($"Not enough free space to {operation} the mod ZIP while leaving a 1 GiB reserve.");
         }
 
         internal static void RejectDirectoryLinks(string directory)

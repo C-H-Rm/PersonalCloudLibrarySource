@@ -31,6 +31,19 @@ internal static class Program
             var second = service.UploadIfChanged(f.Request);
             Check(second.Success && File.ReadAllLines(audit).Length == before, "unchanged content performed rclone work");
         });
+        if (Environment.GetEnvironmentVariable("PCLS_LARGE_ZIP_TEST") == "1")
+            Test("ZIP backup and restore support more than 20,000 files", f => {
+                const int count = 20_001;
+                for (var i = 0; i < count - 1; i++) f.Local(i.ToString("D5") + ".bin", "");
+                f.Local("payload.bin", "mod data");
+                var result = new ModZipUploadService().UploadIfChanged(f.Request, beforeUninstall: true);
+                Check(result.Success, result.Message);
+                var restored = System.IO.Path.Combine(f.Root, "restored-zip");
+                InstallZipModArchive.Install(CloudZipPath(f), restored, CancellationToken.None);
+                Check(Directory.EnumerateFiles(restored).Count() == count &&
+                    File.ReadAllText(System.IO.Path.Combine(restored, "payload.bin")) == "mod data",
+                    "restored ZIP did not contain the entire modpack");
+            });
         Test("ZIP upload catches equal-size/equal-time edits and deletions", f => {
             f.Local("mod.bin", "aaaa"); f.Local("remove.bin", "remove");
             var service = new ModZipUploadService();
