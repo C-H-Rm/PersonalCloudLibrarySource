@@ -83,6 +83,33 @@ internal static class Program
             var result = new ModZipUploadService().UploadIfChanged(f.Request);
             Check(result.Success && result.Message.Contains("unchanged"), "restored bytes were uploaded instead of seeded: " + result.Message);
         });
+        Test("ZIP upload refuses a mod folder under a linked ancestor", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            f.Local("nested/mod", "bytes");
+            var link = System.IO.Path.Combine(f.Root, "linked-parent");
+            Directory.CreateSymbolicLink(link, f.LocalRoot);
+            f.Request.LocalFolder = System.IO.Path.Combine(link, "nested");
+            var result = new ModZipUploadService().UploadIfChanged(f.Request);
+            Check(!result.Success && !File.Exists(CloudZipPath(f)), "linked ancestor was followed during upload");
+        });
+        Test("mod edits during upload stop pre-uninstall backup", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            f.Local("mod", "older bytes");
+            var real = Environment.GetEnvironmentVariable("PCLS_RCLONE") ?? "rclone";
+            var wrapper = System.IO.Path.Combine(f.Root, "edit-during-upload.sh");
+            File.WriteAllText(wrapper, "#!/bin/sh\n\"" + real + "\" \"$@\" || exit $?\n" +
+                "if [ \"$1\" = copyto ]; then printf 'newer bytes' > \"" + f.Path("mod") + "\"; fi\n");
+            File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            f.Request.RcloneExecutable = wrapper;
+            var service = new ModZipUploadService();
+            var result = service.UploadIfChanged(f.Request, beforeUninstall: true);
+            Check(!result.Success && File.ReadAllText(f.Path("mod")) == "newer bytes", "new edits were cleared for uninstall");
+            f.Request.RcloneExecutable = real;
+            Check(service.UploadIfChanged(f.Request, beforeUninstall: true).Success, "retry did not publish newer mods");
+            using var archive = System.IO.Compression.ZipFile.OpenRead(CloudZipPath(f));
+            using var reader = new StreamReader(archive.GetEntry("mod").Open());
+            Check(reader.ReadToEnd() == "newer bytes", "retry ZIP did not contain newer mods");
+        });
         Test("unknown existing cloud ZIP is preserved", f => {
             f.Local("mod", "local"); File.WriteAllText(CloudZipPath(f), "unknown cloud data");
             var result = new ModZipUploadService().UploadIfChanged(f.Request);

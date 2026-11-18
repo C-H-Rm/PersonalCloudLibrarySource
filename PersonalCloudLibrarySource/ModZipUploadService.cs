@@ -15,7 +15,7 @@ namespace PersonalCloudLibrarySource
         private const int MaxFiles = 20000;
         private const long MaxExpandedBytes = 8L * 1024 * 1024 * 1024;
 
-        public ModSyncResult UploadIfChanged(ModSyncRequest request)
+        public ModSyncResult UploadIfChanged(ModSyncRequest request, bool beforeUninstall = false)
         {
             string archive = null;
             try
@@ -74,6 +74,8 @@ namespace PersonalCloudLibrarySource
                         throw;
                     }
                     WriteBaseline(baselinePath, identity, snapshot);
+                    if (beforeUninstall && Snapshot(request.LocalFolder, ListFiles(request.LocalFolder), request.CancellationToken) != snapshot)
+                        throw new IOException("Mods changed during upload. Try uninstalling again to back up the newer changes.");
                     return new ModSyncResult { Success = true, Message = "Changed mods uploaded and published as " + remoteZip + "." };
                 }
             }
@@ -173,8 +175,7 @@ namespace PersonalCloudLibrarySource
 
         private static string[] ListFiles(string root)
         {
-            var attributes = File.GetAttributes(root);
-            if ((attributes & FileAttributes.ReparsePoint) != 0) throw new InvalidOperationException("Mod ZIP upload refuses linked folders/files.");
+            InstallZipModArchive.RejectDirectoryLinks(root);
             var pending = new Stack<string>(); pending.Push(root);
             var files = new List<string>();
             while (pending.Count != 0)

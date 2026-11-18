@@ -116,7 +116,7 @@ namespace PersonalCloudLibrarySource
                 };
                 if (!game.IsInstalled || (!beforeUninstall && (game.IsRunning || game.IsUninstalling)))
                     throw new InvalidOperationException("The game is no longer eligible for an automatic mod backup.");
-                var result = modZipUploadService.UploadIfChanged(request);
+                var result = modZipUploadService.UploadIfChanged(request, beforeUninstall);
                 if (result.Success) logger.Info("Mod ZIP backup for " + game.GameId + ": " + result.Message);
                 return result;
             }
@@ -243,7 +243,8 @@ namespace PersonalCloudLibrarySource
             foreach (var other in manifest.Items.Where(i => i != null))
             {
                 var basePath = ResolveRcloneSourcePath(s, GetItemSourcePath(other));
-                if (!string.IsNullOrWhiteSpace(basePath) && RemotePathsOverlap(remoteRelative, basePath))
+                if (!string.IsNullOrWhiteSpace(basePath) &&
+                    (RemotePathsOverlap(remoteRelative, basePath) || RemotePathsOverlap(remoteRelative + ".zip", basePath)))
                     throw new InvalidOperationException("The cloud mod folder overlaps a base game source path. Keep game data and mods separate.");
                 if (!string.IsNullOrWhiteSpace(other.ModPath) && !string.Equals(item.Id, other.Id, StringComparison.OrdinalIgnoreCase))
                 {

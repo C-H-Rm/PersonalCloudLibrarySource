@@ -21,9 +21,12 @@ Before extraction, the destination must not exist or must be an empty directory.
 
 - No ordinary loose-file mod inventory/listing is run for the initial restore.
 - Archives are limited to 100,000 entries and 64 GiB expanded. On local drives, extraction also checks for enough free space with a 1 GiB reserve after the ZIP has downloaded. That check is not a guarantee against concurrent disk usage.
-- Automatic post-install two-way bisync is not enqueued. Launch, exit, manual game actions, and background callbacks do not start cloud mod operations. The legacy loose-folder implementation remains in source for rollback only; it is not exposed by the shipped lifecycle.
-- No cloud ZIP creation or migration is performed. Prepare and upload the ZIP separately.
+- No automatic post-install bisync, launch/exit transfers, or loose-folder migration.
 - If the ZIP step fails, the game remains installed. In the Downloads window, use **History → Retry mods** for the current failure after correcting the cause. This does not repeat the game download.
+
+## Optional one-way backup
+
+Set **Automatic upload interval in minutes** to enable local → cloud ZIP backups for idle installed games and before uninstall. `0` disables both. Unchanged mods make no server request. Changed mods are staged and published to the same ZIP path; empty folders and existing archives without a known baseline are not overwritten. If the required backup fails or mods change during upload, uninstall stops without deleting the cached copy. Use one active editing PC per modpack; this is a snapshot, not a merge.
 
 ## Verification
 
