@@ -19,7 +19,6 @@ namespace PersonalCloudLibrarySource
             Exception mappingError = null;
             try { imported = BuildModSyncRequest(item, manifest, initialSettings); }
             catch (Exception ex) { mappingError = ex; }
-            var linkedDuringThisInstall = false;
 
             // Legacy bool is retained for caller compatibility, not recovery consent.
             // Installation only downloads. No comparison, upload, relink or bisync here.
@@ -38,53 +37,36 @@ namespace PersonalCloudLibrarySource
                     {
                         if (game.IsRunning) throw new InvalidOperationException("Close the game before downloading mods.");
                         var current = LoadCurrentInstallModRequest(game, imported, currentSettings, token, progress);
-                        return modSyncService.DownloadAfterInstall(current, request =>
+                        var prefix = currentSettings.RcloneRemoteName + ":";
+                        if (!current.RemoteFolder.StartsWith(prefix, StringComparison.Ordinal))
+                            throw new InvalidOperationException("The current cloud mod remote changed.");
+                        var remoteZip = current.RemoteFolder.Substring(prefix.Length) + ".zip";
+                        var localParent = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(current.LocalFolder));
+                        if (string.IsNullOrWhiteSpace(localParent)) throw new InvalidOperationException("Mod destination has no parent directory.");
+                        System.IO.Directory.CreateDirectory(localParent);
+                        var tempArchive = System.IO.Path.Combine(localParent, ".pcls-modzip-download-" + Guid.NewGuid().ToString("N") + ".zip");
+                        try
                         {
-                            var prefix = currentSettings.RcloneRemoteName + ":";
-                            if (!request.RemoteFolder.StartsWith(prefix, StringComparison.Ordinal))
-                                throw new InvalidOperationException("The current cloud mod remote changed.");
-                            var copy = rcloneFileCopier.CopyMissingRemoteDirectoryToLocalPath(currentSettings,
-                                request.RemoteFolder.Substring(prefix.Length), request.LocalFolder,
-                                request.DownloadCompareDirectory, request.CancellationToken,
-                                update => progress?.Invoke(new ModSyncProgress { Phase = "Downloading cloud mods",
+                            var copy = rcloneFileCopier.CopyRemoteFileToLocalPath(currentSettings, remoteZip, tempArchive,
+                                token, update => progress?.Invoke(new ModSyncProgress { Phase = "Downloading mod ZIP",
                                     Bytes = update.CompletedBytes, TotalBytes = update.TotalBytes ?? 0,
                                     BytesPerSecond = update.BytesPerSecond, Percentage = update.Percentage }));
-                            return new ModSyncResult { Success = copy.Succeeded, Cancelled = copy.Cancelled, Message = copy.Message };
-                        });
+                            if (copy.Cancelled) return new ModSyncResult { Cancelled = true, Message = "Mod ZIP download cancelled." };
+                            if (!copy.Succeeded) return new ModSyncResult { Message = "Could not download optional mod ZIP " + remoteZip + ": " + copy.Message };
+                            try
+                            {
+                                InstallZipModArchive.Install(tempArchive, current.LocalFolder, token);
+                                return new ModSyncResult { Success = true, Message = "Optional mod ZIP installed." };
+                            }
+                            catch (OperationCanceledException) { return new ModSyncResult { Cancelled = true, Message = "Mod ZIP installation cancelled." }; }
+                            catch (Exception ex) { return new ModSyncResult { Message = "Could not install optional mod ZIP " + remoteZip + ": " + ex.Message }; }
+                        }
+                        finally { if (System.IO.File.Exists(tempArchive)) System.IO.File.Delete(tempArchive); }
                     }
                     finally { modSyncGate.Release(); }
                 }, token);
-                if (result?.Success == true)
-                {
-                    postInstallModSync.Register(game.Id, backgroundToken => Task.Run(() =>
-                    {
-                        var session = BackgroundInstallModSession(game.Id);
-                        using (var linked = CancellationTokenSource.CreateLinkedTokenSource(backgroundToken,
-                            session?.CancellationToken ?? CancellationToken.None))
-                        {
-                            var tokenForSync = linked.Token;
-                            var s = settings.Settings;
-                            if (s == null || !s.Enabled || !s.EnableModSync) return (ModSyncResult)null;
-                            modSyncGate.Wait(tokenForSync);
-                            try
-                            {
-                                tokenForSync.ThrowIfCancellationRequested();
-                                // The owner defers/cancels this queue before launch; OnGameStopped
-                                // may still expose a stale IsRunning flag while resuming safe work.
-                                var current = LoadCurrentInstallModRequest(game, imported, s, tokenForSync,
-                                    update => session?.Report("BackgroundModSync", update.Bytes,
-                                        update.TotalBytes > 0 ? (long?)update.TotalBytes : null, update.BytesPerSecond,
-                                        message: "Background: " + ModSyncUserInteraction.ProgressText(update.Phase, 0, 0, update.Checks, update.TotalChecks, 0)));
-                                // This expensive work is invoked only by the separate post-Installed queue.
-                                var completed = linkedDuringThisInstall ? modSyncService.Synchronize(current, _ => false) :
-                                    modSyncService.RestoreAfterInstall(current);
-                                if (completed.Success) linkedDuringThisInstall = true;
-                                return completed;
-                            }
-                            finally { modSyncGate.Release(); }
-                        }
-                    }, backgroundToken));
-                }
+                // ZIP mode is a download-only prototype: deliberately do not enqueue automatic
+                // post-install bisync, which could upload the ZIP or propagate stale deletions.
                 return result;
             };
         }

@@ -5,6 +5,7 @@
     <Nullable>disable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../PersonalCloudLibrarySource/InstallZipModArchive.cs" Link="InstallZipModArchive.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/InstallModRestoration.cs" Link="InstallModRestoration.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/InstallModBackground.cs" Link="InstallModBackground.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/ModSyncUserInteraction.cs" Link="ModSyncUserInteraction.cs" />
