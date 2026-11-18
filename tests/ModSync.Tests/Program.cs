@@ -15,6 +15,83 @@ internal static class Program
             f.Local("local.txt", "local"); f.Cloud("cloud.txt", "cloud"); f.Sync();
             Check(File.Exists(f.Remote("local.txt")) && File.Exists(f.Path("cloud.txt")), "merge missing files");
         });
+        Test("ZIP upload does not transfer an unchanged local fingerprint", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            f.Local("mod.bin", "abcd");
+            var audit = System.IO.Path.Combine(f.Root, "zip-audit.txt");
+            var real = Environment.GetEnvironmentVariable("PCLS_RCLONE") ?? "rclone";
+            var wrapper = System.IO.Path.Combine(f.Root, "zip-audit-rclone.sh");
+            File.WriteAllText(wrapper, "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"" + audit + "\"\nexec \"" + real + "\" \"$@\"\n");
+            File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            f.Request.RcloneExecutable = wrapper;
+            var service = new ModZipUploadService();
+            var first = service.UploadIfChanged(f.Request);
+            Check(first.Success && File.Exists(CloudZipPath(f)), first.Message);
+            var before = File.ReadAllLines(audit).Length;
+            var second = service.UploadIfChanged(f.Request);
+            Check(second.Success && File.ReadAllLines(audit).Length == before, "unchanged content performed rclone work");
+        });
+        Test("ZIP upload catches equal-size/equal-time edits and deletions", f => {
+            f.Local("mod.bin", "aaaa"); f.Local("remove.bin", "remove");
+            var service = new ModZipUploadService();
+            Check(service.UploadIfChanged(f.Request).Success, "initial upload failed");
+            var stamp = File.GetLastWriteTimeUtc(f.Path("mod.bin"));
+            File.WriteAllText(f.Path("mod.bin"), "bbbb"); File.SetLastWriteTimeUtc(f.Path("mod.bin"), stamp);
+            File.Delete(f.Path("remove.bin"));
+            var changed = service.UploadIfChanged(f.Request);
+            Check(changed.Success, changed.Message);
+            using (var archive = System.IO.Compression.ZipFile.OpenRead(CloudZipPath(f))) {
+                Check(archive.Entries.Count == 1 && archive.GetEntry("mod.bin") != null, "replacement ZIP did not reflect deletion");
+                using (var reader = new StreamReader(archive.GetEntry("mod.bin").Open())) Check(reader.ReadToEnd() == "bbbb", "content edit was missed");
+            }
+        });
+        Test("fresh manifest validation runs only for changed ZIP content", f => {
+            f.Local("mod", "original");
+            var calls = 0;
+            f.Request.BeforeCloudWrite = () => { calls++; return true; };
+            var service = new ModZipUploadService();
+            Check(service.UploadIfChanged(f.Request).Success && calls == 1, "changed upload skipped validation");
+            Check(service.UploadIfChanged(f.Request).Success && calls == 1, "unchanged upload validated or used the network");
+            f.Local("mod", "changed"); f.Request.BeforeCloudWrite = () => false;
+            Check(!service.UploadIfChanged(f.Request).Success, "changed mapping uploaded");
+        });
+        Test("failed ZIP upload leaves baseline retryable", f => {
+            if (!OperatingSystem.IsLinux()) return;
+            f.Local("mod", "bytes");
+            var real = Environment.GetEnvironmentVariable("PCLS_RCLONE") ?? "rclone";
+            var wrapper = System.IO.Path.Combine(f.Root, "fail-copyto-rclone.sh");
+            File.WriteAllText(wrapper, "#!/bin/sh\n[ \"$1\" = copyto ] && exit 77\nexec \"" + real + "\" \"$@\"\n");
+            File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            f.Request.RcloneExecutable = wrapper;
+            var service = new ModZipUploadService();
+            Check(!service.UploadIfChanged(f.Request).Success && !File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "upload-baseline.txt")), "failed upload advanced baseline");
+            f.Request.RcloneExecutable = real;
+            var retried = service.UploadIfChanged(f.Request);
+            Check(retried.Success && File.Exists(CloudZipPath(f)), retried.Message);
+        });
+        Test("successful install restore seed avoids unchanged re-upload", f => {
+            f.Local("mod", "restored bytes");
+            Directory.CreateDirectory(Path.GetDirectoryName(CloudZipPath(f)));
+            System.IO.Compression.ZipFile.CreateFromDirectory(f.LocalRoot, CloudZipPath(f));
+            new ModZipUploadService().SeedBaseline(f.Request);
+            if (OperatingSystem.IsLinux()) {
+                var wrapper = System.IO.Path.Combine(f.Root, "no-network-rclone.sh");
+                File.WriteAllText(wrapper, "#!/bin/sh\nexit 88\n");
+                File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                f.Request.RcloneExecutable = wrapper;
+            }
+            var result = new ModZipUploadService().UploadIfChanged(f.Request);
+            Check(result.Success && result.Message.Contains("unchanged"), "restored bytes were uploaded instead of seeded: " + result.Message);
+        });
+        Test("unknown existing cloud ZIP is preserved", f => {
+            f.Local("mod", "local"); File.WriteAllText(CloudZipPath(f), "unknown cloud data");
+            var result = new ModZipUploadService().UploadIfChanged(f.Request);
+            Check(!result.Success && File.ReadAllText(CloudZipPath(f)) == "unknown cloud data", "untracked cloud ZIP was overwritten");
+        });
+        Test("empty initial folder never uploads an empty ZIP", f => {
+            var result = new ModZipUploadService().UploadIfChanged(f.Request);
+            Check(!result.Success && !File.Exists(CloudZipPath(f)), "empty folder uploaded");
+        });
         Test("local addition uploads", f => {
             f.Local("keep", "keep"); f.Sync(); f.Local("new.txt", "new"); f.Sync();
             Check(File.ReadAllText(f.Remote("new.txt")) == "new", "upload missing");
@@ -656,6 +733,7 @@ internal static class Program
         catch (Exception ex) { Console.WriteLine("FAIL " + name + ": " + ex.Message); failed++; }
     }
     private static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+    private static string CloudZipPath(Fixture fixture) => fixture.RemoteRoot + ".zip";
     private sealed class Fixture : IDisposable
     {
         public readonly string Root, LocalRoot, RemoteRoot;

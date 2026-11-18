@@ -14,6 +14,9 @@ namespace PersonalCloudLibrarySource
     {
         private readonly SemaphoreSlim modSyncGate = new SemaphoreSlim(1, 1);
         private readonly ModSyncService modSyncService = new ModSyncService();
+        private readonly ModZipUploadService modZipUploadService = new ModZipUploadService();
+        private System.Threading.Timer modZipUploadTimer;
+        private int modZipUploadSweepActive;
 
         private string ModStateDirectory(string gameId) => Path.Combine(GetPluginUserDataPath(), "mod-sync", ModSyncService.Key(gameId));
         private string ModManifestPath => Path.Combine(GetPluginUserDataPath(), "mod-sync-manifest.json");
@@ -35,7 +38,7 @@ namespace PersonalCloudLibrarySource
         {
             // Guard an active install without starting any mod work from a launch.
             if (!args.CancelStartup && args.Game?.PluginId == Id &&
-                InstallProgressState.Shared.Get(args.Game.Id)?.Active == true)
+                (args.Game.IsUninstalling || InstallProgressState.Shared.Get(args.Game.Id)?.Active == true))
             {
                 args.CancelStartup = true;
                 OnModUi(() =>
@@ -54,8 +57,83 @@ namespace PersonalCloudLibrarySource
 
         public override void OnApplicationStopped(OnApplicationStoppedEventArgs args)
         {
+            modZipUploadTimer?.Dispose();
             try { postInstallModSync.CancelAll(); }
             finally { CloseDownloadCenter(); }
+        }
+
+        private void StartModZipUploadTimer()
+        {
+            modZipUploadTimer?.Dispose();
+            var s = settings?.Settings;
+            if (s == null || !s.Enabled || !s.EnableModSync || s.ModSyncIntervalMinutes <= 0) return;
+            var interval = TimeSpan.FromMinutes(s.ModSyncIntervalMinutes);
+            modZipUploadTimer = new System.Threading.Timer(_ =>
+            {
+                if (System.Threading.Interlocked.CompareExchange(ref modZipUploadSweepActive, 1, 0) != 0) return;
+                try
+                {
+                    foreach (var game in playniteApi.Database.Games.GetClone().Where(g => g != null && g.PluginId == Id && g.IsInstalled && !g.IsRunning && !g.IsUninstalling))
+                    {
+                        if (InstallProgressState.Shared.Get(game.Id)?.Active == true) continue;
+                        var result = UploadModZip(game, false);
+                        if (result != null && !result.Success && !result.Cancelled)
+                            logger.Warn("Automatic mod ZIP backup for " + game.GameId + " failed: " + result.Message);
+                    }
+                }
+                catch (Exception ex) { logger.Warn(ex, "Automatic mod ZIP backup scan failed."); }
+                finally { System.Threading.Interlocked.Exchange(ref modZipUploadSweepActive, 0); }
+            }, null, interval, interval);
+        }
+
+        internal void RefreshModZipUploadTimer() => StartModZipUploadTimer();
+
+        private ModSyncResult UploadModZip(Game game, bool beforeUninstall)
+        {
+            var s = settings?.Settings;
+            if (game == null || game.PluginId != Id || !game.IsInstalled || s == null || !s.Enabled || !s.EnableModSync ||
+                (!beforeUninstall && (game.IsRunning || game.IsUninstalling)) ||
+                !string.Equals(GetProviderType(s), PersonalCloudLibrarySourceSettings.RcloneRemoteProviderType, StringComparison.OrdinalIgnoreCase)) return null;
+            if (!modSyncGate.Wait(0)) return new ModSyncResult { Success = false, Message = "Another mod operation is active." };
+            try
+            {
+                if (!File.Exists(ModManifestPath)) return new ModSyncResult { Success = false, Message = "Update the game library before backing up mods." };
+                var importedManifest = ParseManifest(File.ReadAllText(ModManifestPath));
+                var importedItems = importedManifest.Items.Where(i => i != null && string.Equals(i.Id, game.GameId, StringComparison.OrdinalIgnoreCase)).ToList();
+                if (importedItems.Count != 1)
+                    return new ModSyncResult { Success = false, Message = "A unique game mapping is required before mod backup." };
+                if (string.IsNullOrWhiteSpace(importedItems[0].ModPath))
+                    return new ModSyncResult { Success = true, Message = "No modPath is configured; no backup is needed." };
+                var imported = BuildModSyncRequest(importedItems[0], importedManifest, s);
+                var request = imported;
+                request.BeforeCloudWrite = () =>
+                {
+                    var live = ParseManifest(LoadManifestJson(s));
+                    var liveItems = live.Items.Where(i => i != null && string.Equals(i.Id, game.GameId, StringComparison.OrdinalIgnoreCase)).ToList();
+                    if (liveItems.Count != 1 || string.IsNullOrWhiteSpace(liveItems[0].ModPath)) return false;
+                    ModSyncService.RequireCurrentMapping(imported, () => BuildModSyncRequest(liveItems[0], live, s));
+                    return true;
+                };
+                if (!game.IsInstalled || (!beforeUninstall && (game.IsRunning || game.IsUninstalling)))
+                    throw new InvalidOperationException("The game is no longer eligible for an automatic mod backup.");
+                var result = modZipUploadService.UploadIfChanged(request);
+                if (result.Success) logger.Info("Mod ZIP backup for " + game.GameId + ": " + result.Message);
+                return result;
+            }
+            catch (Exception ex) { return new ModSyncResult { Success = false, Message = ex.Message }; }
+            finally { modSyncGate.Release(); }
+        }
+
+        private void BeforeModZipUninstall(Game game)
+        {
+            var s = settings?.Settings;
+            if (s != null && s.ModSyncIntervalMinutes > 0 && s.Enabled && s.EnableModSync)
+            {
+                var result = UploadModZip(game, true);
+                if (result == null || !result.Success)
+                    throw new InvalidOperationException("Required mod ZIP backup failed; uninstall was stopped. " + (result?.Message ?? "No backup was performed."));
+            }
+            PauseModSync(game.GameId);
         }
 
         private ModSyncResult RunModSync(Game game, bool justStopped, bool manual, bool relink)

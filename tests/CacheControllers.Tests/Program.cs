@@ -90,6 +90,15 @@ class Program
             context.Until(() => !f.Game.IsUninstalling);
             Check(!Directory.Exists(f.Folder) && f.Completed == 1, "retry failed");
         });
+        Test("required backup failure stops uninstall before deletion", () =>
+        {
+            using var f = new Fixture();
+            var controller = f.Controller(() => throw new IOException("required ZIP backup failed"));
+            controller.Uninstall(new UninstallActionArgs());
+            context.Until(() => !f.Game.IsUninstalling);
+            Check(File.Exists(f.Item.Launch) && f.Game.IsInstalled && f.Completed == 0,
+                "required pre-uninstall backup failure still deleted the cached game");
+        });
         Test("duplicate request cannot start a second deletion", () =>
         {
             using var f = new Fixture();

@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.IO.Compression;
+using System.Linq;
 using PersonalCloudLibrarySource;
 
 var root = Environment.GetEnvironmentVariable("PCLS_WEBDAV_ROOT");
@@ -62,6 +64,37 @@ var downloaded = service.DownloadAfterInstall(downloadRequest, r => {
 Check(downloaded.Success && File.Exists(Path.Combine(downloadRequest.LocalFolder, "install-cloud")) &&
     !File.Exists(Path.Combine(cloud, "only-local-download")) && !File.Exists(Path.Combine(downloadRequest.StateDirectory, "ready")),
     "install download only reads cloud and does not initialize two-way state");
+var zipLocal = Path.Combine(root, "local", "ModsForZip"); Directory.CreateDirectory(zipLocal);
+File.WriteAllText(Path.Combine(zipLocal, "mod.bin"), "first version");
+var zipRequest = new ModSyncRequest { GameId = "webdav-zip-fixture", LocalFolder = zipLocal,
+    RemoteFolder = request.RemoteFolder + "-zip-fixture", StateDirectory = Path.Combine(root, "zip-state"),
+    LaunchFile = launch, RcloneExecutable = request.RcloneExecutable, TimeoutSeconds = 60 };
+var zipService = new ModZipUploadService();
+var zipOne = zipService.UploadIfChanged(zipRequest);
+Check(zipOne.Success, "ZIP upload to WebDAV: " + zipOne.Message);
+var publishedZip = Path.Combine(root, "cloud", "games", "mods", "Game Name-zip-fixture.zip");
+File.WriteAllText(Path.Combine(zipLocal, "mod.bin"), "replacement version");
+var zipTwo = zipService.UploadIfChanged(zipRequest);
+Check(zipTwo.Success, "ZIP replacement via WebDAV moveto: " + zipTwo.Message);
+using (var archive = ZipFile.OpenRead(publishedZip))
+using (var reader = new StreamReader(archive.GetEntry("mod.bin").Open()))
+    Check(reader.ReadToEnd() == "replacement version", "ZIP replacement contents match the changed files");
+var preserved = File.ReadAllBytes(publishedZip);
+File.WriteAllText(Path.Combine(zipLocal, "mod.bin"), "failed replacement");
+if (OperatingSystem.IsLinux()) {
+    var wrapper = Path.Combine(root, "fail-publish-rclone.sh");
+    File.WriteAllText(wrapper, "#!/bin/sh\n[ \"$1\" = moveto ] && exit 79\nexec \"" + request.RcloneExecutable + "\" \"$@\"\n");
+    File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+    zipRequest.RcloneExecutable = wrapper;
+    var failedPublish = zipService.UploadIfChanged(zipRequest);
+    Check(!failedPublish.Success && File.ReadAllBytes(publishedZip).SequenceEqual(preserved), "failed publish preserves the previous WebDAV ZIP");
+    zipRequest.RcloneExecutable = request.RcloneExecutable;
+    var retryPublish = zipService.UploadIfChanged(zipRequest);
+    Check(retryPublish.Success, "retry after failed publish succeeds: " + retryPublish.Message);
+    using (var archive = ZipFile.OpenRead(publishedZip))
+    using (var reader = new StreamReader(archive.GetEntry("mod.bin").Open()))
+        Check(reader.ReadToEnd() == "failed replacement", "retry publishes the previously failed content");
+}
 var background = service.RestoreAfterInstall(downloadRequest);
 Check(background.Success && File.Exists(Path.Combine(cloud, "only-local-download")) &&
     File.Exists(Path.Combine(downloadRequest.StateDirectory, "ready")), "separate background phase initializes two-way synchronization");

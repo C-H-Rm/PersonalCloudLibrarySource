@@ -62,6 +62,7 @@
     <Compile Include="PluginLifecycle.cs" />
     <Compile Include="ModSyncService.cs" />
     <Compile Include="ModSyncProcess.cs" />
+    <Compile Include="ModZipUploadService.cs" />
     <Compile Include="ModSyncIntegration.cs" />
     <Compile Include="InstallZipModArchive.cs" />
     <Compile Include="InstallModRestoration.cs" />

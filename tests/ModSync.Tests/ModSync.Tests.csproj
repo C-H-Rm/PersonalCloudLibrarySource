@@ -8,6 +8,7 @@
   <ItemGroup>
     <Compile Include="../../PersonalCloudLibrarySource/ModSyncService.cs" Link="ModSyncService.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/ModSyncProcess.cs" Link="ModSyncProcess.cs" />
+    <Compile Include="../../PersonalCloudLibrarySource/ModZipUploadService.cs" Link="ModZipUploadService.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/RcloneFileCopier.cs" Link="RcloneFileCopier.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/RcloneManifestReader.cs" Link="RcloneManifestReader.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/RcloneActivityTimeout.cs" Link="RcloneActivityTimeout.cs" />

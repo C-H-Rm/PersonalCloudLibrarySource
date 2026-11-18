@@ -55,6 +55,7 @@ namespace PersonalCloudLibrarySource
                             try
                             {
                                 InstallZipModArchive.Install(tempArchive, current.LocalFolder, token);
+                                modZipUploadService.SeedBaseline(current);
                                 return new ModSyncResult { Success = true, Message = "Optional mod ZIP installed." };
                             }
                             catch (OperationCanceledException) { return new ModSyncResult { Cancelled = true, Message = "Mod ZIP installation cancelled." }; }

@@ -10,6 +10,7 @@ namespace PersonalCloudLibrarySource
             InitializeLegacyMigration();
             PromptLegacyMigration();
             InitializeDownloadCenter();
+            StartModZipUploadTimer();
         }
 
 
