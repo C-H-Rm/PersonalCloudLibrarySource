@@ -74,6 +74,7 @@ namespace PersonalCloudLibrarySource
             {
                 if (downloadCenterWindow != null)
                 {
+                    CenterDownloadCenterOnOwner();
                     if (downloadCenterWindow.WindowState == WindowState.Minimized) downloadCenterWindow.WindowState = WindowState.Normal;
                     downloadCenterWindow.Activate();
                     return;
@@ -84,6 +85,12 @@ namespace PersonalCloudLibrarySource
                     ShowMinimizeButton = false, ShowMaximizeButton = false, ShowCloseButton = true
                 });
                 downloadCenterWindow.Title = ForkIdentity.DisplayName + " — Downloads";
+                // Dialogs.CreateWindow is the SDK-supported window factory; retain its Playnite owner.
+                // Fall back to WPF's actual main window only if the factory did not assign one.
+                if (downloadCenterWindow.Owner == null && Application.Current?.MainWindow != null &&
+                    !ReferenceEquals(downloadCenterWindow, Application.Current.MainWindow))
+                    downloadCenterWindow.Owner = Application.Current.MainWindow;
+                downloadCenterWindow.WindowStartupLocation = WindowStartupLocation.CenterOwner;
                 downloadCenterWindow.Width = 620;
                 downloadCenterWindow.Height = 520;
                 downloadCenterWindow.MinWidth = 440;
@@ -96,6 +103,14 @@ namespace PersonalCloudLibrarySource
                 downloadCenterWindow.Show();
                 RefreshDownloadCenter();
             }
+        }
+
+        private void CenterDownloadCenterOnOwner()
+        {
+            if (downloadCenterWindow?.Owner == null || downloadCenterWindow.Owner.WindowState == WindowState.Minimized) return;
+            // WPF owner-relative coordinates keep the window on the owner's monitor, including when Playnite moved.
+            downloadCenterWindow.Left = downloadCenterWindow.Owner.Left + (downloadCenterWindow.Owner.ActualWidth - downloadCenterWindow.Width) / 2;
+            downloadCenterWindow.Top = downloadCenterWindow.Owner.Top + (downloadCenterWindow.Owner.ActualHeight - downloadCenterWindow.Height) / 2;
         }
 
         private void DownloadCenterWindowClosed(object sender, EventArgs args)
@@ -203,23 +218,32 @@ namespace CHRCL
                 var progress = new ProgressBar { Height = 6, Minimum = 0, Maximum = 100, Margin = new Thickness(0, 2, 0, 4), IsIndeterminate = unknown };
                 if (!unknown) progress.Value = record.Percentage.Value;
                 panel.Children.Add(progress);
+                panel.Children.Add(new TextBlock { Text = FormatPhaseSize("Game download", record.GameCompletedBytes, record.GameTotalBytes), Opacity = 0.72, FontSize = 11 });
+                panel.Children.Add(new TextBlock { Text = FormatPhaseSize("Mod download", record.ModCompletedBytes, record.ModTotalBytes), Opacity = 0.72, FontSize = 11 });
                 panel.Children.Add(new TextBlock { Text = FormatProgress(record), Opacity = 0.72, FontSize = 11 });
             }
             else
             {
-                var count = record.TotalBytes.HasValue ? FormatBytes(record.CompletedBytes) + " / " + FormatBytes(record.TotalBytes.Value) : FormatBytes(record.CompletedBytes);
-                panel.Children.Add(new TextBlock { Text = count + " · " + record.UpdatedUtc.ToLocalTime().ToString("g", CultureInfo.CurrentCulture), Opacity = 0.72, FontSize = 11 });
+                panel.Children.Add(new TextBlock { Text = FormatPhaseSize("Game download", record.GameCompletedBytes, record.GameTotalBytes), Opacity = 0.72, FontSize = 11 });
+                panel.Children.Add(new TextBlock { Text = FormatPhaseSize("Mod download", record.ModCompletedBytes, record.ModTotalBytes), Opacity = 0.72, FontSize = 11 });
+                panel.Children.Add(new TextBlock { Text = FormatProgress(record) + " · " + record.UpdatedUtc.ToLocalTime().ToString("g", CultureInfo.CurrentCulture), Opacity = 0.72, FontSize = 11 });
             }
             return new Border { BorderBrush = SystemColors.ControlDarkBrush, BorderThickness = new Thickness(0, 0, 0, 1), Child = panel };
         }
 
         private static UIElement EmptyRow(string text) => new TextBlock { Text = text, Margin = new Thickness(12), Opacity = 0.7 };
+        private static string FormatPhaseSize(string label, long? completed, long? total)
+        {
+            if (!completed.HasValue) return label + ": size not recorded";
+            return label + ": " + FormatBytes(completed.Value) +
+                (total.HasValue ? " / " + FormatBytes(total.Value) : " (total unknown)");
+        }
+
         private static string FormatProgress(PersonalCloudLibrarySource.DownloadHistoryRecord record)
         {
             var value = record.Percentage.HasValue
                 ? (Math.Floor(record.Percentage.Value * 10) / 10).ToString("0.0", CultureInfo.CurrentCulture) + "% · " : string.Empty;
-            value += record.TotalBytes.HasValue ? FormatBytes(record.CompletedBytes) + " / " + FormatBytes(record.TotalBytes.Value) : FormatBytes(record.CompletedBytes);
-            value += record.BytesPerSecond > 0 ? " · " + FormatBytes((long)record.BytesPerSecond) + "/s" : " · speed unavailable";
+            value += record.BytesPerSecond > 0 ? FormatBytes((long)record.BytesPerSecond) + "/s" : "speed unavailable";
             return value;
         }
         private static string FormatBytes(long bytes)

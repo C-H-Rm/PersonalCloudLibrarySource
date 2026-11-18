@@ -20,6 +20,21 @@ state.Changed += (_, __) => throw new Exception("explicit observer fixture failu
 first.Report("Downloading", 10, 100, 20, 10);
 Check(observedOutsideLock, "UI notification is outside the state lock");
 Check(state.Get(game).CompletedBytes == 10 && state.Get(other).CompletedBytes == 0, "a rendering observer failure cannot abort or cross-wire transfers");
+var phaseGame = Guid.NewGuid();
+Check(state.TryBegin(phaseGame, out var phaseOperation), "phase-accounting operation starts independently");
+phaseOperation.Report("Downloading", 40, 40, 10, 100);
+Check(state.Get(phaseGame).GameCompletedBytes == 40 && state.Get(phaseGame).GameTotalBytes == 40, "upstream one-file total is retained for game download");
+phaseOperation.Report("DownloadingMods", 3, 12, 2, 25);
+var modProgress = state.Get(phaseGame);
+Check(modProgress.GameCompletedBytes == 40 && modProgress.GameTotalBytes == 40 && modProgress.ModCompletedBytes == 3 && modProgress.ModTotalBytes == 12,
+    "mod progress keeps its own counters without replacing game totals");
+Check(modProgress.CompletedBytes == 3 && modProgress.TotalBytes == 12 && modProgress.Percentage == 25,
+    "active phase percentage uses only the current phase denominator");
+phaseOperation.Report("DownloadingMods", 12, 12, 2, 100);
+phaseOperation.Finish("Failed");
+Check(state.Get(phaseGame).GameCompletedBytes == 40 && state.Get(phaseGame).ModCompletedBytes == 12,
+    "failed terminal state retains both phase counters");
+phaseOperation.Dispose();
 var prior = state.Get(game);
 first.Report("Downloading", 20, 100, 20, 20);
 Check(prior.CompletedBytes == 10 && state.Get(game).CompletedBytes == 20, "published snapshots are not mutated by later updates");

@@ -41,6 +41,13 @@ internal static class Program
             tracker.ObserveStats("{\"stats\":{\"bytes\":20,\"speed\":8,\"totalBytes\":200,\"transfers\":1,\"totalTransfers\":3}}", 2);
             Check(tracker.Progress.TotalBytes == 100 && tracker.Progress.CompletedBytes == 20 && tracker.Progress.Percentage == 20, "denominator changed as more files were discovered");
         });
+        Test("single-file upstream total stays visible immediately", f =>
+        {
+            var tracker = new RcloneTransferProgressTracker();
+            tracker.ObserveStats("{\"stats\":{\"bytes\":1,\"speed\":1,\"totalBytes\":37,\"transfers\":1,\"totalTransfers\":1}}", 1);
+            Check(tracker.Progress.Phase == "Downloading" && tracker.Progress.TotalBytes == 37 && tracker.Progress.Percentage == Math.Floor(1000.0 / 37) / 10.0,
+                "single-file progress discarded the upstream total");
+        });
         Test("missing-mod progress stays indeterminate while streaming until successful completion", f =>
         {
             var tracker = new RcloneTransferProgressTracker(freezeTotalAfterChecks: true);

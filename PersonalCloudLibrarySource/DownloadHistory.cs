@@ -18,6 +18,10 @@ namespace PersonalCloudLibrarySource
         public string OperationKind { get; internal set; }
         public long CompletedBytes { get; internal set; }
         public long? TotalBytes { get; internal set; }
+        public long? GameCompletedBytes { get; internal set; }
+        public long? GameTotalBytes { get; internal set; }
+        public long? ModCompletedBytes { get; internal set; }
+        public long? ModTotalBytes { get; internal set; }
         public double BytesPerSecond { get; internal set; }
         public double? Percentage { get; internal set; }
         public DateTime StartedUtc { get; internal set; }
@@ -128,12 +132,18 @@ namespace PersonalCloudLibrarySource
                 if (!string.IsNullOrWhiteSpace(snapshot.GameName)) existing.GameName = snapshot.GameName;
                 existing.Phase = SafePhase(snapshot.Phase);
                 var operationKind = Kind(snapshot.Phase);
-                if (operationKind == "Background mod sync" || string.IsNullOrEmpty(existing.OperationKind)) existing.OperationKind = operationKind;
+                if (operationKind == "Background mod sync") existing.OperationKind = operationKind;
+                else if (snapshot.GameCompletedBytes.HasValue && snapshot.ModCompletedBytes.HasValue) existing.OperationKind = "Game and mod download";
+                else if (string.IsNullOrEmpty(existing.OperationKind)) existing.OperationKind = operationKind;
                 if ((snapshot.Active && snapshot.Phase != "Finishing") || snapshot.TotalBytes.HasValue || snapshot.CompletedBytes > 0)
                 {
                     existing.CompletedBytes = Math.Max(0, snapshot.CompletedBytes);
                     existing.TotalBytes = snapshot.TotalBytes >= 0 ? snapshot.TotalBytes : null;
                 }
+                existing.GameCompletedBytes = snapshot.GameCompletedBytes;
+                existing.GameTotalBytes = snapshot.GameTotalBytes;
+                existing.ModCompletedBytes = snapshot.ModCompletedBytes;
+                existing.ModTotalBytes = snapshot.ModTotalBytes;
                 existing.Percentage = snapshot.Percentage;
                 existing.BytesPerSecond = snapshot.Active ? snapshot.BytesPerSecond : 0;
                 existing.UpdatedUtc = snapshot.UpdatedUtc;
@@ -239,13 +249,17 @@ namespace PersonalCloudLibrarySource
             [DataMember(Name="kind")] public string Kind { get; set; }
             [DataMember(Name="completedBytes")] public long Bytes { get; set; }
             [DataMember(Name="totalBytes", EmitDefaultValue=false)] public long? Total { get; set; }
+            [DataMember(Name="gameCompletedBytes", EmitDefaultValue=false)] public long? GameBytes { get; set; }
+            [DataMember(Name="gameTotalBytes", EmitDefaultValue=false)] public long? GameTotal { get; set; }
+            [DataMember(Name="modCompletedBytes", EmitDefaultValue=false)] public long? ModBytes { get; set; }
+            [DataMember(Name="modTotalBytes", EmitDefaultValue=false)] public long? ModTotal { get; set; }
             [DataMember(Name="bytesPerSecond")] public double Speed { get; set; }
             [DataMember(Name="percentage", EmitDefaultValue=false)] public double? Percentage { get; set; }
             [DataMember(Name="startedUtc")] public DateTime Started { get; set; }
             [DataMember(Name="updatedUtc")] public DateTime Updated { get; set; }
             [DataMember(Name="active")] public bool Active { get; set; }
-            public static StoredRecord From(DownloadHistoryRecord x) => new StoredRecord { Game=x.GameId.ToString("D"), GameName=x.GameName, Operation=x.OperationId.ToString("D"), Phase=x.Phase, Kind=x.OperationKind, Bytes=x.CompletedBytes, Total=x.TotalBytes, Speed=x.BytesPerSecond, Percentage=x.Percentage, Started=x.StartedUtc, Updated=x.UpdatedUtc, Active=x.Active };
-            public DownloadHistoryRecord ToRecord() => new DownloadHistoryRecord { GameId=Guid.Parse(Game), GameName=GameName, OperationId=Guid.Parse(Operation), Phase=Phase, OperationKind=Kind, CompletedBytes=Math.Max(0,Bytes), TotalBytes=Total, BytesPerSecond=Speed, Percentage=Percentage, StartedUtc=Started, UpdatedUtc=Updated, Active=Active };
+            public static StoredRecord From(DownloadHistoryRecord x) => new StoredRecord { Game=x.GameId.ToString("D"), GameName=x.GameName, Operation=x.OperationId.ToString("D"), Phase=x.Phase, Kind=x.OperationKind, Bytes=x.CompletedBytes, Total=x.TotalBytes, GameBytes=x.GameCompletedBytes, GameTotal=x.GameTotalBytes, ModBytes=x.ModCompletedBytes, ModTotal=x.ModTotalBytes, Speed=x.BytesPerSecond, Percentage=x.Percentage, Started=x.StartedUtc, Updated=x.UpdatedUtc, Active=x.Active };
+            public DownloadHistoryRecord ToRecord() => new DownloadHistoryRecord { GameId=Guid.Parse(Game), GameName=GameName, OperationId=Guid.Parse(Operation), Phase=Phase, OperationKind=Kind, CompletedBytes=Math.Max(0,Bytes), TotalBytes=Total, GameCompletedBytes=GameBytes, GameTotalBytes=GameTotal, ModCompletedBytes=ModBytes, ModTotalBytes=ModTotal, BytesPerSecond=Speed, Percentage=Percentage, StartedUtc=Started, UpdatedUtc=Updated, Active=Active };
         }
     }
 }

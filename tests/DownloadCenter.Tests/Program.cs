@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using PersonalCloudLibrarySource;
@@ -42,12 +43,59 @@ try
     Check(failed[0].CompletedBytes == 12 && failed[0].TotalBytes == 80, "terminal record retains useful transfer counters");
     var json = File.ReadAllText(path);
     Check(!json.Contains("secret diagnostic") && !json.Contains("command"), "history excludes raw messages and command details");
+    var legacyPath = path + ".legacy";
+    var legacyJson = Regex.Replace(json, ",\"(gameCompletedBytes|gameTotalBytes|modCompletedBytes|modTotalBytes)\":(?:[0-9]+|null)", "");
+    File.WriteAllText(legacyPath, legacyJson);
+    using (var legacy = new DownloadHistory(new InstallProgressState(), legacyPath))
+    {
+        var old = legacy.GetSnapshot().Single();
+        Check(old.CompletedBytes == 12 && old.TotalBytes == 80 && !old.GameCompletedBytes.HasValue && !old.ModCompletedBytes.HasValue,
+            "legacy mixed-phase byte fields remain unclassified instead of being guessed as game or mod");
+    }
     history.Dispose();
 
     var restartedState = new InstallProgressState();
     var restarted = new DownloadHistory(restartedState, path);
     Check(restarted.GetSnapshot().Count == 1 && restarted.GetSnapshot()[0].Phase == "Failed", "history survives restart");
     restarted.Dispose();
+
+    var phaseState = new InstallProgressState();
+    var phasePath = path + ".phases";
+    var phaseHistory = new DownloadHistory(phaseState, phasePath);
+    phaseState.TryBegin(Guid.NewGuid(), out var phaseOperation, "Two-phase download");
+    phaseOperation.Report("Downloading", 40, 40, 10, 100);
+    phaseOperation.Report("DownloadingMods", 5, 20, 2, 25);
+    Check(phaseHistory.GetSnapshot().Single().GameCompletedBytes == 40 && phaseHistory.GetSnapshot().Single().ModCompletedBytes == 5,
+        "history keeps game and mod byte counts separate while the mod phase is active");
+    Check(phaseHistory.GetSnapshot().Single().Percentage == 25, "history percentage follows the current mod-phase denominator");
+    phaseOperation.Finish("Cancelled", "Optional mod transfer cancelled");
+    Check(phaseHistory.Flush(TimeSpan.FromSeconds(5)), "cancelled two-phase history flushes");
+    Check(phaseHistory.GetSnapshot().Single().GameTotalBytes == 40 && phaseHistory.GetSnapshot().Single().ModTotalBytes == 20,
+        "cancelled terminal history retains both phase totals");
+    phaseState.TryBegin(Guid.NewGuid(), out var successfulPhases, "Successful two-phase download");
+    successfulPhases.Report("Downloading", 40, 40, 10, 100);
+    successfulPhases.Report("DownloadingMods", 20, 20, 5, 100);
+    successfulPhases.Finish("Complete");
+    var successfulRecord = phaseHistory.GetSnapshot().Single(x => x.OperationId == successfulPhases.OperationId);
+    Check(successfulRecord.GameCompletedBytes == 40 && successfulRecord.ModCompletedBytes == 20 && successfulRecord.Percentage == 100,
+        "successful terminal history retains both totals and only then reaches 100 percent");
+    Check(phaseHistory.Flush(TimeSpan.FromSeconds(5)), "successful two-phase history flushes");
+    phaseHistory.Dispose();
+    var cancelledPhaseId = phaseOperation.OperationId;
+    using (var recoveredPhases = new DownloadHistory(new InstallProgressState(), phasePath))
+        Check(recoveredPhases.GetSnapshot().Single(x => x.OperationId == cancelledPhaseId).GameCompletedBytes == 40 &&
+              recoveredPhases.GetSnapshot().Single(x => x.OperationId == cancelledPhaseId).ModCompletedBytes == 5,
+            "separate counters survive a process restart");
+
+    var skippedState = new InstallProgressState();
+    using (var skippedHistory = new DownloadHistory(skippedState, path + ".skipped"))
+    {
+        skippedState.TryBegin(Guid.NewGuid(), out var skippedGame);
+        skippedGame.Report("Downloading", 8, 8, 1, 100);
+        skippedGame.Finish("Complete");
+        Check(skippedHistory.GetSnapshot().Single().GameCompletedBytes == 8 && !skippedHistory.GetSnapshot().Single().ModCompletedBytes.HasValue,
+            "game-only completion does not invent a mod download or mod size");
+    }
 
     var retry = new DownloadHistory(state, path + ".retry");
     Check(state.TryBegin(gameA, out var secondAttempt) && secondAttempt.OperationId != first.OperationId, "retry is a distinct operation identity");
