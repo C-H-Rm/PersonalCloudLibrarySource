@@ -336,6 +336,7 @@ internal static class Program
             Check(baseResult.Succeeded, baseResult.Message);
             var baseArgs = File.ReadAllLines(audit);
             Check(!baseArgs.Contains("--check-first"), "base-game copy retained the whole-tree pre-transfer barrier");
+            Check(baseArgs.Count(arg => arg == "--fast-list") == 1, "base-game directory copy did not request fast listing");
             Check(baseArgs.Contains("--log-level=DEBUG"), "native checker-completion signal is not enabled");
             void CheckConcurrency(string[] command, string verb)
             {
@@ -350,7 +351,9 @@ internal static class Program
             var archiveResult = f.Copier.CopyRemoteFileToLocalPath(f.Settings, Path.Combine(source, "new"),
                 archiveTarget, CancellationToken.None, archiveProgress.Add);
             Check(archiveResult.Succeeded && File.ReadAllText(archiveTarget) == "new", archiveResult.Message);
-            CheckConcurrency(File.ReadAllLines(audit), "copyto");
+            var archiveArgs = File.ReadAllLines(audit);
+            CheckConcurrency(archiveArgs, "copyto");
+            Check(!archiveArgs.Contains("--fast-list"), "a single archive does not need recursive listing");
             Check(archiveProgress.Last().TotalBytes == new FileInfo(archiveTarget).Length,
                 "a fast archive download lost its exact transferred size");
         });
