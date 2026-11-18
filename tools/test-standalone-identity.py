@@ -18,10 +18,11 @@ class IdentityTests(unittest.TestCase):
         manifest = (SOURCE / 'extension.yaml').read_text()
         self.assertRegex(manifest, r'(?m)^Id: ' + re.escape(ADDON_ID) + '$')
         self.assertRegex(manifest, r'(?m)^Name: Cloud Storage Integration$')
+        self.assertRegex(manifest, r'(?m)^Author: "by C-H-R"$')
         self.assertRegex(manifest, r'(?m)^Module: CloudStorageIntegration.dll$')
         self.assertNotIn(LEGACY_ID, manifest)
         self.assertNotIn('github.com/KurtusCobain/', manifest)
-        self.assertIn('github.com/C-H-Rm/PersonalCloudLibrarySource', manifest)
+        self.assertIn('github.com/C-H-Rm/Cloud-Storage-Integration', manifest)
         self.assertNotIn('AddonId:', manifest)
 
     def test_runtime_and_assembly_use_fork_identity(self):
@@ -46,7 +47,9 @@ class IdentityTests(unittest.TestCase):
             self.assertEqual(set(archive.namelist()), {
                 'CloudStorageIntegration.dll', 'extension.yaml', 'icon.png', 'Localization/en_US.xaml'})
             self.assertIsNone(archive.testzip())
-            self.assertIn('Id: ' + ADDON_ID, archive.read('extension.yaml').decode('utf-8-sig'))
+            manifest = archive.read('extension.yaml').decode('utf-8-sig')
+            self.assertIn('Id: ' + ADDON_ID, manifest)
+            self.assertRegex(manifest, r'(?m)^Author: "by C-H-R"\r?$')
             self.assertEqual(archive.read('CloudStorageIntegration.dll'),
                              (SOURCE / 'bin/Release/CloudStorageIntegration.dll').read_bytes())
 

@@ -337,6 +337,22 @@ internal static class Program
             var baseArgs = File.ReadAllLines(audit);
             Check(!baseArgs.Contains("--check-first"), "base-game copy retained the whole-tree pre-transfer barrier");
             Check(baseArgs.Contains("--log-level=DEBUG"), "native checker-completion signal is not enabled");
+            void CheckConcurrency(string[] command, string verb)
+            {
+                Check(command[0] == verb && command.Count(arg => arg == "--transfers=32") == 1 &&
+                    command.Count(arg => arg == "--checkers=32") == 1,
+                    "expected the 32-transfer/checker policy on " + verb + ": " + string.Join(" ", command));
+            }
+            CheckConcurrency(baseArgs, "copy");
+            File.WriteAllText(audit, string.Empty);
+            var archiveTarget = Path.Combine(f.Root, "mod-download.zip");
+            var archiveProgress = new System.Collections.Generic.List<RcloneTransferProgress>();
+            var archiveResult = f.Copier.CopyRemoteFileToLocalPath(f.Settings, Path.Combine(source, "new"),
+                archiveTarget, CancellationToken.None, archiveProgress.Add);
+            Check(archiveResult.Succeeded && File.ReadAllText(archiveTarget) == "new", archiveResult.Message);
+            CheckConcurrency(File.ReadAllLines(audit), "copyto");
+            Check(archiveProgress.Last().TotalBytes == new FileInfo(archiveTarget).Length,
+                "a fast archive download lost its exact transferred size");
         });
         Test("watchdog follows real progress rather than total elapsed time", f =>
         {

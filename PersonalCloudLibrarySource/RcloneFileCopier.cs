@@ -79,6 +79,7 @@ namespace PersonalCloudLibrarySource
                         Arguments = command + " " + RcloneManifestReader.QuoteArgument(remote + ":" + remotePath.Trim()) +
                             " " + RcloneManifestReader.QuoteArgument(destination) +
                             (isDirectory ? string.Empty : " --check-first") +
+                            (!onlyMissing ? " --transfers=32 --checkers=32" : string.Empty) +
                             " --use-json-log --stats=1s --stats-log-level=NOTICE --log-level=DEBUG" +
                             " --contimeout=" + connectSeconds.ToString(CultureInfo.InvariantCulture) + "s" +
                             " --timeout=" + inactiveSeconds.ToString(CultureInfo.InvariantCulture) + "s" +
