@@ -10,7 +10,15 @@ namespace PersonalCloudLibrarySource
     /// <summary>Safely installs an archive whose root is the contents of the modPath folder.</summary>
     public static class InstallZipModArchive
     {
+        private const int MaxEntries = 100_000;
+        private const long MaxExpandedBytes = 64L * 1024 * 1024 * 1024;
+        private const long FreeSpaceReserve = 1024L * 1024 * 1024;
+
         public static void Install(string archivePath, string targetDirectory, CancellationToken cancellationToken)
+            => Install(archivePath, targetDirectory, cancellationToken, MaxEntries, MaxExpandedBytes);
+
+        internal static void Install(string archivePath, string targetDirectory, CancellationToken cancellationToken,
+            int maxEntries, long maxExpandedBytes)
         {
             if (string.IsNullOrWhiteSpace(archivePath) || !File.Exists(archivePath))
                 throw new FileNotFoundException("The optional mod ZIP was not downloaded.", archivePath);
@@ -27,12 +35,14 @@ namespace PersonalCloudLibrarySource
 
             var stage = Path.Combine(parent, ".pcls-modzip-stage-" + Guid.NewGuid().ToString("N"));
             var displacedEmpty = Path.Combine(parent, ".pcls-modzip-empty-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(stage);
             var movedOld = false;
             try
             {
                 using (var archive = ZipFile.OpenRead(archivePath))
                 {
+                    if (archive.Entries.Count > maxEntries)
+                        throw new InvalidDataException($"Mod ZIP exceeds the limit of {maxEntries:N0} entries.");
+                    var declaredBytes = 0L;
                     var seen = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
                     var seenSpelling = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                     var explicitPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -40,6 +50,11 @@ namespace PersonalCloudLibrarySource
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         var isDirectory = entry.FullName.EndsWith("/", StringComparison.Ordinal);
+                        if (entry.Length < 0 || entry.Length > maxExpandedBytes - declaredBytes)
+                            throw new InvalidDataException($"Mod ZIP exceeds the expanded size limit of {maxExpandedBytes:N0} bytes.");
+                        if (isDirectory && entry.Length != 0)
+                            throw new InvalidDataException("ZIP directory entry contains data: " + entry.FullName);
+                        declaredBytes += entry.Length;
                         var relative = entry.FullName.TrimEnd('/');
                         ValidateName(relative, entry.FullName);
                         var segments = relative.Split('/');
@@ -62,6 +77,15 @@ namespace PersonalCloudLibrarySource
                         if (unixMode == 0xA000 || (entry.ExternalAttributes & 0x400) != 0)
                             throw new InvalidDataException("ZIP links and reparse-point entries are not supported: " + entry.FullName);
                     }
+                    var driveRoot = Path.GetPathRoot(parent);
+                    // DriveInfo supports drive letters, not UNC shares. The absolute archive caps apply to both.
+                    if (!driveRoot.StartsWith(@"\\", StringComparison.Ordinal) && declaredBytes > 0 &&
+                        declaredBytes > Math.Max(0L, new DriveInfo(driveRoot).AvailableFreeSpace - FreeSpaceReserve))
+                        throw new IOException("Not enough free space to extract the mod ZIP while leaving a 1 GiB reserve.");
+                    RejectDirectoryLinks(targetDirectory);
+                    Directory.CreateDirectory(stage);
+                    var remainingTotal = declaredBytes;
+                    var buffer = new byte[81920];
                     foreach (var entry in archive.Entries)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
@@ -75,13 +99,15 @@ namespace PersonalCloudLibrarySource
                         using (var input = entry.Open())
                         using (var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                         {
-                            var buffer = new byte[81920]; int read;
+                            int read;
                             var remaining = entry.Length;
                             while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
                             {
                                 cancellationToken.ThrowIfCancellationRequested();
+                                if (read > remaining || read > remainingTotal)
+                                    throw new InvalidDataException("ZIP data exceeds its declared size: " + entry.FullName);
                                 remaining -= read;
-                                if (remaining < 0) throw new InvalidDataException("ZIP entry exceeds its declared size: " + entry.FullName);
+                                remainingTotal -= read;
                                 output.Write(buffer, 0, read);
                             }
                             if (remaining != 0) throw new InvalidDataException("ZIP entry is truncated: " + entry.FullName);

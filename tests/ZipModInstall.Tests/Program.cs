@@ -25,6 +25,7 @@ internal static class Program
             Test("duplicate entries refused", DuplicateRejected);
             Test("file/directory collisions and symlink entries refused", EntryTypeGuards);
             Test("destination and its parents are never followed through links", LinkedDestinationRejected);
+            Test("entry and aggregate expansion limits refuse publication", ExpansionLimits);
             Test("corrupt ZIP refused without partial install", CorruptArchiveRejected);
             Test("cancelled extraction leaves destination and staging clean", CancellationRejected);
             Test("real rclone local-backend download then install", RealRcloneDownload);
@@ -114,6 +115,18 @@ internal static class Program
         Throws<IOException>(() => InstallZipModArchive.Install(archive, link, CancellationToken.None));
         Throws<IOException>(() => InstallZipModArchive.Install(archive, Path.Combine(link, "nested", "Mods"), CancellationToken.None));
         if (Directory.EnumerateFileSystemEntries(outside).Any()) throw new Exception("archive touched data through a directory link");
+    }
+    private static void ExpansionLimits()
+    {
+        var archive = MakeZip(("a.txt", "1234"), ("b.txt", "5678"));
+        var target = Directory.CreateDirectory(Path.Combine(root, "budgeted-target")).FullName;
+        Throws<InvalidDataException>(() => InstallZipModArchive.Install(archive, target, CancellationToken.None, 1, 8));
+        Throws<InvalidDataException>(() => InstallZipModArchive.Install(archive, target, CancellationToken.None, 2, 7));
+        if (Directory.EnumerateFileSystemEntries(target).Any()) throw new Exception("failed limit check changed destination");
+        NoStage();
+        InstallZipModArchive.Install(archive, target, CancellationToken.None, 2, 8);
+        Equal("1234", File.ReadAllText(Path.Combine(target, "a.txt")));
+        Equal("5678", File.ReadAllText(Path.Combine(target, "b.txt")));
     }
     private static void CorruptArchiveRejected()
     {
