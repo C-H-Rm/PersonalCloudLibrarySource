@@ -10,15 +10,14 @@ namespace PersonalCloudLibrarySource
     /// <summary>Safely installs an archive whose root is the contents of the modPath folder.</summary>
     public static class InstallZipModArchive
     {
-        internal const int MaxEntries = 100_000;
         internal const long MaxExpandedBytes = 64L * 1024 * 1024 * 1024;
         private const long FreeSpaceReserve = 1024L * 1024 * 1024;
 
         public static void Install(string archivePath, string targetDirectory, CancellationToken cancellationToken)
-            => Install(archivePath, targetDirectory, cancellationToken, MaxEntries, MaxExpandedBytes);
+            => Install(archivePath, targetDirectory, cancellationToken, MaxExpandedBytes);
 
         internal static void Install(string archivePath, string targetDirectory, CancellationToken cancellationToken,
-            int maxEntries, long maxExpandedBytes)
+            long maxExpandedBytes)
         {
             if (string.IsNullOrWhiteSpace(archivePath) || !File.Exists(archivePath))
                 throw new FileNotFoundException("The optional mod ZIP was not downloaded.", archivePath);
@@ -40,8 +39,6 @@ namespace PersonalCloudLibrarySource
             {
                 using (var archive = ZipFile.OpenRead(archivePath))
                 {
-                    if (archive.Entries.Count > maxEntries)
-                        throw new InvalidDataException($"Mod ZIP exceeds the limit of {maxEntries:N0} entries.");
                     var declaredBytes = 0L;
                     var seen = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
                     var seenSpelling = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

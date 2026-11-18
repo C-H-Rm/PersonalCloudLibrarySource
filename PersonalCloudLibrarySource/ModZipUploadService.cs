@@ -197,12 +197,7 @@ namespace PersonalCloudLibrarySource
                     if ((entryAttributes & FileAttributes.ReparsePoint) != 0)
                         throw new InvalidOperationException("Mod ZIP upload refuses linked folders/files.");
                     if ((entryAttributes & FileAttributes.Directory) != 0) pending.Push(path);
-                    else
-                    {
-                        if (files.Count == InstallZipModArchive.MaxEntries)
-                            throw new InvalidOperationException($"Mod folder exceeds the ZIP limit of {InstallZipModArchive.MaxEntries:N0} files.");
-                        files.Add(path);
-                    }
+                    else files.Add(path);
                 }
             return files.OrderBy(path => Relative(root, path), StringComparer.Ordinal).ToArray();
         }
