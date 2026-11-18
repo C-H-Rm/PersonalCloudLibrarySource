@@ -16,6 +16,7 @@ on:
       - tests/LegacyMigration.Tests/**
       - tools/test-standalone-identity.py
       - tests/InstallModRestoration.Tests/**
+      - tests/ZipModInstall.Tests/**
       - tests/PostInstallModSyncQueue.Tests/**
       - tools/package-extension.ps1
       - tools/verify-package.ps1
@@ -39,6 +40,7 @@ on:
       - tests/LegacyMigration.Tests/**
       - tools/test-standalone-identity.py
       - tests/InstallModRestoration.Tests/**
+      - tests/ZipModInstall.Tests/**
       - tests/PostInstallModSyncQueue.Tests/**
       - tools/package-extension.ps1
       - tools/verify-package.ps1
@@ -122,8 +124,11 @@ jobs:
       - name: Test mod sync interaction and progress presentation
         run: dotnet run --project tests/ModSyncUx.Tests/ModSyncUx.Tests.csproj --configuration Release
 
-      - name: Test one-way installation mod download and deferred two-way work
+      - name: Test one-way mod download during game installation
         run: dotnet run --project tests/InstallModRestoration.Tests/InstallModRestoration.Tests.csproj --configuration Release
+
+      - name: Test ZIP mod download and safe extraction
+        run: dotnet run --project tests/ZipModInstall.Tests/ZipModInstall.Tests.csproj --configuration Release
 
       - name: Test post-install background mod queue cancellation and launch deferral
         run: dotnet run --project tests/PostInstallModSyncQueue.Tests/PostInstallModSyncQueue.Tests.csproj --configuration Release

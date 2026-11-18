@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
@@ -19,23 +20,25 @@ internal static class Program
 
     private static async Task<int> Main()
     {
+        Run("literal game ID mapping resolves ZIP beside the mod folder", LiteralIdMapping);
         Run("factory eligibility excludes disabled, blank-path, and local-provider imports", Eligibility);
         Run("invalid imported optional mapping is deferred until restore", InvalidMappingDeferred);
         Run("fresh live mapping mismatch and offline manifest refuse before writes", FreshMappingRequired);
         Run("callback observes replacement settings instance", SettingsReplacementObserved);
-        await RunAsync("gate wait cancellation neither over-releases nor leaks the operation gate", GateCancellation);
-        await RunAsync("installation only downloads missing cloud mods, never compares or uploads", DownloadOnly);
-        await RunAsync("inventory failure cancels the actual adapter's staged rclone transfer", InventoryFailureCancelsCopy);
-        await RunAsync("two-way initialization starts only when background queue is explicitly started", DownloadThenBackground);
-        await RunAsync("launch defers pending background work until explicit post-game resume", LaunchDefersBackground);
-        await RunAsync("actual background adapter observes native work and clears status without setting installing", BackgroundAdapter);
-        await RunAsync("notification rendering failure does not orphan background native work", BackgroundNotificationFailure);
-        await RunAsync("background notification cancellation reaches the actual factory manifest token", BackgroundNotificationCancellation);
-        await RunAsync("actual launch barrier cancels and drains background work without UI deadlock", BackgroundLaunchBarrier);
-        await RunAsync("failed background work retains a launch barrier until explicit review", FailedBackgroundLaunchBarrier);
-        await RunAsync("failed mod download cannot trigger foreground initialization on launch", FailedDownloadLaunchBarrier);
-        Console.WriteLine($"InstallModRestoration composed tests: {passed} passed, {failed} failed");
+        await RunAsync("mod synchronization gate cancellation stays safe", GateCancellation);
+        await RunAsync("ZIP mod download uses actual rclone and installs archive-root contents", ZipDownloadInstall);
+        await RunAsync("missing ZIP is an actionable optional-mod failure without folder fallback", MissingZip);
+        await RunAsync("populated modPath is protected and archive download leaves files intact", PopulatedTargetRefused);
+        await RunAsync("ZIP download never queues automatic loose-folder bisync", NoBackgroundBisync);
+        Console.WriteLine($"InstallModRestoration ZIP integration tests: {passed} passed, {failed} failed");
         return failed == 0 ? 0 : 1;
+    }
+
+    private static void LiteralIdMapping()
+    {
+        var path = ModSyncService.ResolveCloudModFolder("games", "a1b2");
+        Check(path == "games/mods/a1b2", "literal cloud mod folder mapping changed: " + path);
+        Check(path + ".zip" == "games/mods/a1b2.zip", "ZIP object is not adjacent to the folder mapping");
     }
 
     private static void Eligibility()
@@ -101,6 +104,57 @@ internal static class Program
         var result = callback(CancellationToken.None, null, false).GetAwaiter().GetResult();
         Check(result == null, "callback did not observe new disabled settings instance");
         Check(!Directory.Exists(f.State), "disabled current settings reached service");
+    }
+
+    private static async Task ZipDownloadInstall()
+    {
+        using var f = new Fixture();
+        var zipPath = f.Cloud + ".zip";
+        using (var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+        {
+            using (var writer = new StreamWriter(zip.CreateEntry("plugin.dll").Open())) writer.Write("zip-root");
+            using (var writer = new StreamWriter(zip.CreateEntry("config/settings.ini").Open())) writer.Write("nested");
+        }
+        File.WriteAllText(Path.Combine(f.Cloud, "remote-marker.txt"), "stay remote");
+        var originalZip = File.ReadAllBytes(zipPath);
+        var callback = f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings());
+        var result = await callback(CancellationToken.None, null, false);
+        Check(result.Success, result.Message);
+        Check(File.ReadAllText(Path.Combine(f.Local, "plugin.dll")) == "zip-root", "archive root not mapped directly to modPath");
+        Check(File.ReadAllText(Path.Combine(f.Local, "config", "settings.ini")) == "nested", "nested archive entry missing");
+        Check(File.ReadAllText(Path.Combine(f.Cloud, "remote-marker.txt")) == "stay remote", "cloud source changed");
+        Check(File.ReadAllBytes(zipPath).SequenceEqual(originalZip), "restore changed the cloud ZIP");
+        Check(Directory.GetFileSystemEntries(f.State).Select(Path.GetFileName).SequenceEqual(new[] { "upload-baseline.txt" }),
+            "ZIP restore should seed only the upload baseline, not initialize bisync state");
+    }
+
+    private static async Task MissingZip()
+    {
+        using var f = new Fixture();
+        var result = await f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings())(CancellationToken.None, null, false);
+        Check(!result.Success && result.Message.Contains("cloud.zip"), "missing archive did not name the expected ZIP: " + result.Message);
+        Check(!File.Exists(Path.Combine(f.Local, "mod.txt")) && !Directory.Exists(f.State), "missing ZIP fell back to loose-file copy or mutated sync state");
+    }
+
+    private static async Task PopulatedTargetRefused()
+    {
+        using var f = new Fixture();
+        File.WriteAllText(Path.Combine(f.Local, "keep.txt"), "user data");
+        using (var zip = ZipFile.Open(f.Cloud + ".zip", ZipArchiveMode.Create))
+            using (var writer = new StreamWriter(zip.CreateEntry("new.txt").Open())) writer.Write("new");
+        var result = await f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings())(CancellationToken.None, null, false);
+        Check(!result.Success && result.Message.Contains("not empty"), "populated modPath wasn't refused: " + result.Message);
+        Check(File.ReadAllText(Path.Combine(f.Local, "keep.txt")) == "user data" && !File.Exists(Path.Combine(f.Local, "new.txt")), "target data changed");
+    }
+
+    private static async Task NoBackgroundBisync()
+    {
+        using var f = new Fixture();
+        using (var zip = ZipFile.Open(f.Cloud + ".zip", ZipArchiveMode.Create))
+            using (var writer = new StreamWriter(zip.CreateEntry("mod.txt").Open())) writer.Write("mod");
+        var result = await f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings())(CancellationToken.None, null, false);
+        Check(result.Success, result.Message);
+        Check(!f.Source.Queue.Contains(f.Game.Id) && !File.Exists(Path.Combine(f.State, "ready")), "ZIP prototype enqueued automatic bisync");
     }
 
     private static async Task GateCancellation()
@@ -392,6 +446,7 @@ namespace PersonalCloudLibrarySource
         private PersonalCloudLibrarySourceSettingsViewModel settings;
         private readonly SemaphoreSlim modSyncGate = new SemaphoreSlim(1, 1);
         private readonly ModSyncService modSyncService = new ModSyncService();
+        private readonly ModZipUploadService modZipUploadService = new ModZipUploadService();
         private readonly RcloneFileCopier rcloneFileCopier = new RcloneFileCopier();
         public PostInstallModSyncQueue Queue => postInstallModSync;
         public void BeginBackground(bool resume = false) => StartInstallBackgroundModSync(Harness.Game, resume);

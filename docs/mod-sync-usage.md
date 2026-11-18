@@ -1,39 +1,19 @@
-# Using optional mod synchronization
+# Optional mod ZIP downloads
 
-Enable mod sync in the plugin settings and update the game library after adding or changing a game's `modPath`. Right-click one game owned by this library and choose **Personal Cloud Library → Sync mods**. Games without a configured `modPath` do not participate.
+Enable **Download the configured mod ZIP during game installation** and update the game library after adding or changing a game's `modPath`. Mod ZIP downloads are optional and run only during game installation, or through the install controller's **Retry mods** action after the base game is installed.
 
-## Download mods first; synchronize after installation
+## Archive contract
 
-With Mod Sync enabled and a nonblank per-game `modPath`, installation **only downloads cloud mods to the local mod folder**. It does not upload local files, delete files, perform an initial content comparison, or run bisync/relink on the installation critical path. Filename/size metadata inventory and transferred-file integrity checks remain; those are not a two-way comparison. Existing local files are preserved with `--ignore-existing`; any differences are reviewed later, not silently overwritten. Reserved synchronization markers are not downloaded as ordinary mods.
+For an `RcloneContentRoot` of `games` and literal game ID `a1b2`, the archive is `<rclone remote>:games/mods/a1b2.zip`. The ZIP root contains the contents that should be extracted into the configured `modPath`; it must not contain a wrapping folder.
 
-The imported mapping is captured before the base-game copy and compared with a freshly loaded live manifest before writing mods. Path/link/name-collision protections and the local operation lock remain. A failed or cancelled mod download keeps the base game installed and offers a **download-only Retry mods** action. This action never authorizes recovery or baseline reset.
+The feature requires the enabled plugin, enabled ZIP-download setting, RcloneRemote provider, and a nonblank `modPath` in the current live manifest. The current mapping is checked before writing. Missing, inaccessible, or invalid ZIP files produce an actionable optional-mod failure while keeping the base game installed. **Retry mods** downloads only the ZIP again; it does not redownload the base game or authorize recovery.
 
-After the download finishes, the controller clears `IsInstalling` and emits the SDK **Installed** event. Only then does a separate background queue begin the two-way work. Installation does not await that queue. Background status has an actionable cancellation notification; it is not a separate global-progress popup. Theme-host integration is still required for the optional inline status control.
+Extraction is staged and validates every path before publication. ZIP traversal/rooted/device/invalid names, duplicate or case-insensitive collisions, links and reparse-point entries are rejected. To protect existing user data, a populated destination is refused without modification; an absent or empty destination is eligible for extraction. Cancellation and extraction failure do not publish partial staged contents.
 
-Completed matching old pairing state is retained/paused during download so removed cache files cannot be propagated as cloud deletions. The later background initializer may archive that completed state and establish a real new bisync baseline. Interrupted initial state is retained for explicit recovery; no `ready` file or baseline is fabricated by downloading. Background conflicts/failures do not uninstall the game or trigger an automatic resync loop; review the normal Sync mods action when needed.
+## No synchronization lifecycle
 
-Launching the just-installed game defers pending background work or cancels/drains an active background worker before launch, without restarting the initial comparison in the foreground. Pending work resumes after the game stops. The queue is local to the running plugin, not a persistent external scheduler; stopping Playnite cancels its work.
-
-The native per-object hash optimization applies to the later initial-sync comparison, not to the installation download. The background phase can still be expensive on a backend without native hashes. No particular Nextcloud throughput is promised by local fixture tests.
-
-## Progress and cancellation
-
-The progress dialog shows the current phase and, when rclone supplies them, transferred bytes, speed and checked-file counts. A phase with no known total stays indeterminate rather than inventing a percentage. Verification can read files without changing them; a busy verification phase is not proof that all mods are being uploaded again.
-
-**Cancel** stops the current operation, including its rclone process and current-manifest lookup. Already completed transfers are retained. Cancellation does not disable mod sync or delete its pairing state. If cancelling the sync started before a game launch, that particular launch is cancelled too; the game is never silently launched with unverified mods. Click Play again or use Sync mods when ready.
-
-Successful manual operations no longer need a success dialog to be dismissed. Results and actionable errors use a per-game Playnite notification instead; failures include a diagnostic path where available. Clicking a retry notification validates the current configuration again, rather than blindly replaying an old command.
-
-## Retrying and recovery
-
-- After cancelling or declining a question, use **Sync mods** again. Approvals belong only to the individual operation and are not stored as blanket permission.
-- If an interrupted first linkage or uninstall requires recovery, ordinary **Sync mods** offers the existing explicit recovery confirmation. The separate menu action is called **Recover or relink mods**.
-- Recovery archives the previous state and deliberately establishes a new pairing after confirmation. It does not silently choose local-wins/cloud-wins or automatically run `--resync` after a normal error.
-- A failed recovery is not retried indefinitely. Diagnose the actual connectivity/conflict/path problem using the reported log, then retry.
-- Missing folders/markers, changed live mappings, initial conflicts and potentially destructive whole-folder clears still pause the operation. Do not manually delete state or access markers to make a warning disappear.
-
-This is sequential-PC synchronization, not a distributed lock. Close the game and finish synchronization on one PC before continuing on another.
+This shipped mode is strictly cloud-to-client ZIP download during game installation. It never uploads files, propagates deletions, runs loose-folder inventory/bisync/relink, or synchronizes automatically on game launch or exit. No manual Sync mods or recovery menu action is exposed. Existing pairing/configuration bytes are not migrated, reset, or rewritten by ZIP installation. Legacy loose-folder sync code is retained only as unreachable rollback code.
 
 ## Verification scope
 
-Local real-rclone tests and a full SDK/WPF build validate the implementation and package. They do not replace testing the rendered Playnite dialogs on Windows or prove performance against a particular Nextcloud backend. Generic loopback WebDAV timing/content-read measurements must be labelled separately from actual Nextcloud measurements.
+Local tests exercise ZIP safety and real rclone transfers against disposable local data. They do not verify a Windows Playnite runtime/UI, a live Nextcloud service, or custom theme rendering. Never use a production mod folder or live cloud data as a test fixture.

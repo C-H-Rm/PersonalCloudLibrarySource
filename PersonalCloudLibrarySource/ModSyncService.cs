@@ -24,6 +24,7 @@ namespace PersonalCloudLibrarySource
         public CancellationToken CancellationToken { get; set; }
         public Action<ModSyncProgress> Progress { get; set; }
         public string DownloadCompareDirectory { get; set; }
+        public Func<bool> BeforeCloudWrite { get; set; }
     }
 
     public sealed class ModSyncProgress

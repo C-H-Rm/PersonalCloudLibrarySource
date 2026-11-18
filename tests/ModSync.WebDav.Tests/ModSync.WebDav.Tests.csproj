@@ -3,5 +3,7 @@
   <ItemGroup>
     <Compile Include="../../PersonalCloudLibrarySource/ModSyncService.cs" Link="ModSyncService.cs" />
     <Compile Include="../../PersonalCloudLibrarySource/ModSyncProcess.cs" Link="ModSyncProcess.cs" />
+    <Compile Include="../../PersonalCloudLibrarySource/ModZipUploadService.cs" Link="ModZipUploadService.cs" />
+    <Compile Include="../../PersonalCloudLibrarySource/InstallZipModArchive.cs" Link="InstallZipModArchive.cs" />
   </ItemGroup>
 </Project>

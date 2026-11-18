@@ -40,6 +40,13 @@ namespace PersonalCloudLibrarySource
         private bool allowUninstallOutsideCacheFolder = false;
         private bool enableModSync = false;
         private int modSyncTimeoutSeconds = 1800;
+        private int modSyncIntervalMinutes;
+
+        public int ModSyncIntervalMinutes
+        {
+            get => modSyncIntervalMinutes;
+            set => SetValue(ref modSyncIntervalMinutes, value);
+        }
 
         public bool EnableModSync
         {
@@ -211,6 +218,7 @@ namespace PersonalCloudLibrarySource
         public void EndEdit()
         {
             plugin.SavePluginSettings(Settings);
+            plugin.RefreshModZipUploadTimer();
         }
 
         public bool VerifySettings(out List<string> errors)
@@ -289,6 +297,9 @@ namespace PersonalCloudLibrarySource
             {
                 errors.Add("The local cache folder does not exist.");
             }
+
+            if (Settings.ModSyncIntervalMinutes < 0 || Settings.ModSyncIntervalMinutes > 10080)
+                errors.Add("Automatic mod ZIP upload interval must be between 0 and 10080 minutes (0 disables automatic upload).");
 
             var uninstallBehavior = string.IsNullOrWhiteSpace(Settings.UninstallBehavior)
                 ? PersonalCloudLibrarySourceSettings.RemoveCachedInstallFolderUninstallBehavior

@@ -18,6 +18,10 @@ namespace PersonalCloudLibrarySource
         public string Message { get; internal set; }
         public long CompletedBytes { get; internal set; }
         public long? TotalBytes { get; internal set; }
+        public long? GameCompletedBytes { get; internal set; }
+        public long? GameTotalBytes { get; internal set; }
+        public long? ModCompletedBytes { get; internal set; }
+        public long? ModTotalBytes { get; internal set; }
         public double BytesPerSecond { get; internal set; }
         public double? Percentage { get; internal set; }
         public bool Active { get; internal set; }
@@ -67,7 +71,7 @@ namespace PersonalCloudLibrarySource
             lock (gate) return new List<InstallProgressSnapshot>(entries.Values.Select(x => x.Snapshot)).AsReadOnly();
         }
 
-        internal void Report(InstallProgressSession session, string phase, long bytes, long? total,
+        internal void Report(InstallProgressSession session, string phase, long? bytes, long? total,
             double speed, double? percentage, string message)
         {
             InstallProgressSnapshot snapshot;
@@ -76,8 +80,23 @@ namespace PersonalCloudLibrarySource
                 if (!entries.TryGetValue(session.GameId, out var entry) || entry.Session != session) return;
                 snapshot = NewSnapshot(session.GameId, session.OperationId, phase, message, active: true);
                 snapshot.GameName = entry.Snapshot.GameName;
-                snapshot.CompletedBytes = Math.Max(0, bytes);
-                snapshot.TotalBytes = total >= 0 ? total : null;
+                var phaseChanged = !string.Equals(entry.Snapshot.Phase, phase, StringComparison.Ordinal);
+                snapshot.CompletedBytes = bytes.HasValue ? Math.Max(0, bytes.Value) : (phaseChanged ? 0 : entry.Snapshot.CompletedBytes);
+                snapshot.TotalBytes = total.HasValue ? (total.Value >= 0 ? total : null) : (phaseChanged ? null : entry.Snapshot.TotalBytes);
+                if (IsModPhase(phase))
+                {
+                    snapshot.GameCompletedBytes = entry.Snapshot.GameCompletedBytes;
+                    snapshot.GameTotalBytes = entry.Snapshot.GameTotalBytes;
+                    snapshot.ModCompletedBytes = bytes.HasValue ? snapshot.CompletedBytes : entry.Snapshot.ModCompletedBytes;
+                    snapshot.ModTotalBytes = total.HasValue ? snapshot.TotalBytes : entry.Snapshot.ModTotalBytes;
+                }
+                else
+                {
+                    snapshot.GameCompletedBytes = bytes.HasValue ? snapshot.CompletedBytes : entry.Snapshot.GameCompletedBytes;
+                    snapshot.GameTotalBytes = total.HasValue ? snapshot.TotalBytes : entry.Snapshot.GameTotalBytes;
+                    snapshot.ModCompletedBytes = entry.Snapshot.ModCompletedBytes;
+                    snapshot.ModTotalBytes = entry.Snapshot.ModTotalBytes;
+                }
                 snapshot.BytesPerSecond = speed >= 0 && !double.IsNaN(speed) && !double.IsInfinity(speed) ? speed : 0;
                 snapshot.Percentage = percentage >= 0 && percentage <= 100 && !double.IsNaN(percentage.Value) ? percentage : null;
                 entry.Snapshot = snapshot;
@@ -97,6 +116,10 @@ namespace PersonalCloudLibrarySource
                     snapshot.CompletedBytes = entry.Snapshot.CompletedBytes;
                     snapshot.GameName = entry.Snapshot.GameName;
                     snapshot.TotalBytes = entry.Snapshot.TotalBytes;
+                    snapshot.GameCompletedBytes = entry.Snapshot.GameCompletedBytes;
+                    snapshot.GameTotalBytes = entry.Snapshot.GameTotalBytes;
+                    snapshot.ModCompletedBytes = entry.Snapshot.ModCompletedBytes;
+                    snapshot.ModTotalBytes = entry.Snapshot.ModTotalBytes;
                     snapshot.BytesPerSecond = entry.Snapshot.BytesPerSecond;
                     snapshot.Percentage = entry.Snapshot.Percentage;
                 }
@@ -124,12 +147,15 @@ namespace PersonalCloudLibrarySource
             return session != null && session.OperationId == operationId && session.Cancel();
         }
 
-        public bool Retry(Guid gameId)
+        public bool Retry(Guid gameId) => Retry(gameId, null);
+
+        public bool Retry(Guid gameId, Guid? operationId)
         {
             Action retry;
             lock (gate)
             {
-                if (!entries.TryGetValue(gameId, out var entry) || entry.Session != null) return false;
+                if (!entries.TryGetValue(gameId, out var entry) || entry.Session != null ||
+                    (operationId.HasValue && entry.Snapshot.OperationId != operationId.Value)) return false;
                 retry = entry.Retry;
                 entry.Retry = null;
             }
@@ -143,6 +169,10 @@ namespace PersonalCloudLibrarySource
             return new InstallProgressSnapshot { GameId = gameId, OperationId = operationId, Revision = Interlocked.Increment(ref revision),
                 UpdatedUtc = DateTime.UtcNow, Phase = phase, Message = message, Active = active };
         }
+
+        private static bool IsModPhase(string phase) => phase != null &&
+            (phase.IndexOf("Mod", StringComparison.OrdinalIgnoreCase) >= 0 ||
+             string.Equals(phase, "BackgroundModSync", StringComparison.OrdinalIgnoreCase));
 
         private void Notify(InstallProgressSnapshot snapshot)
         {
@@ -173,7 +203,7 @@ namespace PersonalCloudLibrarySource
         public CancellationToken CancellationToken { get; }
         internal InstallProgressSession(InstallProgressState owner, Guid gameId)
         { this.owner = owner; GameId = gameId; CancellationToken = cancellation.Token; }
-        public void Report(string phase, long bytes = 0, long? total = null, double speed = 0,
+        public void Report(string phase, long? bytes = null, long? total = null, double speed = 0,
             double? percentage = null, string message = null)
         { if (Volatile.Read(ref finished) == 0) owner.Report(this, phase, bytes, total, speed, percentage, message); }
         public void Finish(string phase, string message = null, Action retry = null, string retryLabel = "Retry mods")

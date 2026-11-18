@@ -41,6 +41,13 @@ internal static class Program
             tracker.ObserveStats("{\"stats\":{\"bytes\":20,\"speed\":8,\"totalBytes\":200,\"transfers\":1,\"totalTransfers\":3}}", 2);
             Check(tracker.Progress.TotalBytes == 100 && tracker.Progress.CompletedBytes == 20 && tracker.Progress.Percentage == 20, "denominator changed as more files were discovered");
         });
+        Test("single-file upstream total stays visible immediately", f =>
+        {
+            var tracker = new RcloneTransferProgressTracker();
+            tracker.ObserveStats("{\"stats\":{\"bytes\":1,\"speed\":1,\"totalBytes\":37,\"transfers\":1,\"totalTransfers\":1}}", 1);
+            Check(tracker.Progress.Phase == "Downloading" && tracker.Progress.TotalBytes == 37 && tracker.Progress.Percentage == Math.Floor(1000.0 / 37) / 10.0,
+                "single-file progress discarded the upstream total");
+        });
         Test("missing-mod progress stays indeterminate while streaming until successful completion", f =>
         {
             var tracker = new RcloneTransferProgressTracker(freezeTotalAfterChecks: true);
@@ -336,7 +343,26 @@ internal static class Program
             Check(baseResult.Succeeded, baseResult.Message);
             var baseArgs = File.ReadAllLines(audit);
             Check(!baseArgs.Contains("--check-first"), "base-game copy retained the whole-tree pre-transfer barrier");
+            Check(baseArgs.Count(arg => arg == "--fast-list") == 1, "base-game directory copy did not request fast listing");
             Check(baseArgs.Contains("--log-level=DEBUG"), "native checker-completion signal is not enabled");
+            void CheckConcurrency(string[] command, string verb)
+            {
+                Check(command[0] == verb && command.Count(arg => arg == "--transfers=32") == 1 &&
+                    command.Count(arg => arg == "--checkers=32") == 1,
+                    "expected the 32-transfer/checker policy on " + verb + ": " + string.Join(" ", command));
+            }
+            CheckConcurrency(baseArgs, "copy");
+            File.WriteAllText(audit, string.Empty);
+            var archiveTarget = Path.Combine(f.Root, "mod-download.zip");
+            var archiveProgress = new System.Collections.Generic.List<RcloneTransferProgress>();
+            var archiveResult = f.Copier.CopyRemoteFileToLocalPath(f.Settings, Path.Combine(source, "new"),
+                archiveTarget, CancellationToken.None, archiveProgress.Add);
+            Check(archiveResult.Succeeded && File.ReadAllText(archiveTarget) == "new", archiveResult.Message);
+            var archiveArgs = File.ReadAllLines(audit);
+            CheckConcurrency(archiveArgs, "copyto");
+            Check(!archiveArgs.Contains("--fast-list"), "a single archive does not need recursive listing");
+            Check(archiveProgress.Last().TotalBytes == new FileInfo(archiveTarget).Length,
+                "a fast archive download lost its exact transferred size");
         });
         Test("watchdog follows real progress rather than total elapsed time", f =>
         {

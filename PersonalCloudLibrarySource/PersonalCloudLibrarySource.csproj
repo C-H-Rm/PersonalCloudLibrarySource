@@ -39,6 +39,8 @@
     <Reference Include="PresentationFramework" />
     <Reference Include="System" />
     <Reference Include="System.Core" />
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
     <Reference Include="System.Runtime.Serialization" />
     <Reference Include="System.Xaml" />
     <Reference Include="System.Xml.Linq" />
@@ -60,7 +62,9 @@
     <Compile Include="PluginLifecycle.cs" />
     <Compile Include="ModSyncService.cs" />
     <Compile Include="ModSyncProcess.cs" />
+    <Compile Include="ModZipUploadService.cs" />
     <Compile Include="ModSyncIntegration.cs" />
+    <Compile Include="InstallZipModArchive.cs" />
     <Compile Include="InstallModRestoration.cs" />
     <Compile Include="InstallModBackground.cs" />
     <Compile Include="PostInstallModSyncQueue.cs" />

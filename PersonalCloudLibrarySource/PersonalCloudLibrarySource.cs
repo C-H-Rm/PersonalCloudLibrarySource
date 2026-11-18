@@ -153,7 +153,7 @@ namespace PersonalCloudLibrarySource
                         rcloneFileCopier,
                         localFileCopier,
                         CreateInstallModRestore(args.Game, item, manifest, pluginSettings),
-                        () => StartInstallBackgroundModSync(args.Game)));
+                        null));
                     logger.Info($"Personal Cloud Library Source install action returned for {item.Id}.");
                     return installActions;
                 }
@@ -237,7 +237,7 @@ namespace PersonalCloudLibrarySource
                     }
 
                     uninstallActions.Add(new PersonalCloudLibraryUninstallController(playniteApi, args.Game, item, pluginSettings,
-                        () => PauseModSync(item.Id)));
+                        () => BeforeModZipUninstall(args.Game)));
                     logger.Info($"Personal Cloud Library Source uninstall action returned for {item.Id}.");
                     return uninstallActions;
                 }

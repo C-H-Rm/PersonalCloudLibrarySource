@@ -90,6 +90,15 @@ class Program
             context.Until(() => !f.Game.IsUninstalling);
             Check(!Directory.Exists(f.Folder) && f.Completed == 1, "retry failed");
         });
+        Test("required backup failure stops uninstall before deletion", () =>
+        {
+            using var f = new Fixture();
+            var controller = f.Controller(() => throw new IOException("required ZIP backup failed"));
+            controller.Uninstall(new UninstallActionArgs());
+            context.Until(() => !f.Game.IsUninstalling);
+            Check(File.Exists(f.Item.Launch) && f.Game.IsInstalled && f.Completed == 0,
+                "required pre-uninstall backup failure still deleted the cached game");
+        });
         Test("duplicate request cannot start a second deletion", () =>
         {
             using var f = new Fixture();
@@ -311,13 +320,8 @@ class Program
             using var f = new Fixture();
             var plugin = f.MenuPlugin(System.Text.Json.JsonSerializer.Serialize(new { items = new[] { new { id = "test", modPath = path } } }));
             var menu = plugin.GetGameMenuItems(new GetGameMenuItemsArgs { Games = new[] { f.Game } }).ToList();
-            Check(menu.Count == (string.IsNullOrWhiteSpace(path) ? 0 : 2), "wrong menu visibility");
-            Check(plugin.SyncCalls == 0, "opening menu triggered synchronization");
-            if (menu.Count == 2)
-            {
-                menu[0].Action(null); Check(plugin.SyncCalls == 1 && !plugin.Relink, "wrong sync action");
-                menu[1].Action(null); Check(plugin.SyncCalls == 2 && plugin.Relink, "wrong relink action");
-            }
+            Check(menu.Count == 0, "ZIP-only mode exposed manual cloud synchronization");
+            Check(plugin.SyncCalls == 0, "manual sync entrypoint was invoked");
         });
         foreach (var json in new[] { "{}", "{broken", "{\"items\":[]}", "{\"items\":[null]}", "{\"items\":[{\"id\":\"other\",\"modPath\":\"Mods\"}]}", "{\"items\":[{\"id\":\"test\",\"modPath\":\"Mods\"},{\"id\":\"TEST\",\"modPath\":\"Mods\"}]}" })
         Test("invalid or ambiguous cached mod configuration hides menu: " + json, () =>
@@ -350,7 +354,7 @@ class Program
         Test("imported game IDs remain case insensitive", () =>
         {
             using var f = new Fixture(); var plugin = f.MenuPlugin("{\"items\":[null,{\"id\":\"TEST\",\"modPath\":\"Mods\"}]}");
-            Check(plugin.GetGameMenuItems(new GetGameMenuItemsArgs { Games = new[] { f.Game } }).Count() == 2, "matching entry was hidden");
+            Check(!plugin.GetGameMenuItems(new GetGameMenuItemsArgs { Games = new[] { f.Game } }).Any(), "legacy sync actions remained exposed");
         });
         Test("cloud mod folders use the literal manifest ID", () => {
             Check(ModSyncService.ResolveCloudModFolder("Library/files", "skyrim-se") == "Library/files/mods/skyrim-se", "wrong ID folder");
