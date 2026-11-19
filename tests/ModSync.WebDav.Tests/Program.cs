@@ -70,7 +70,7 @@ var zipRequest = new ModSyncRequest { GameId = "webdav-zip-fixture", LocalFolder
     RemoteFolder = request.RemoteFolder + "-zip-fixture", StateDirectory = Path.Combine(root, "zip-state"),
     LaunchFile = launch, RcloneExecutable = request.RcloneExecutable, TimeoutSeconds = 60 };
 var zipService = new ModZipUploadService();
-var zipOne = zipService.UploadIfChanged(zipRequest);
+var zipOne = zipService.UploadFirst(zipRequest);
 Check(zipOne.Success, "ZIP upload to WebDAV: " + zipOne.Message);
 var publishedZip = Path.Combine(root, "cloud", "games", "mods", "Game Name-zip-fixture.zip");
 File.WriteAllText(Path.Combine(zipLocal, "mod.bin"), "replacement version");

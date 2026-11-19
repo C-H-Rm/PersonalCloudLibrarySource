@@ -27,7 +27,12 @@ internal static class Program
         Run("callback observes replacement settings instance", SettingsReplacementObserved);
         await RunAsync("mod synchronization gate cancellation stays safe", GateCancellation);
         await RunAsync("ZIP mod download uses actual rclone and installs archive-root contents", ZipDownloadInstall);
-        await RunAsync("missing ZIP is an actionable optional-mod failure without folder fallback", MissingZip);
+        await RunAsync("missing ZIP and empty mod folder skip quietly", MissingZip);
+        await RunAsync("first upload asks on the UI context and publishes only after Yes", FirstUploadAccepted);
+        await RunAsync("declining first upload leaves files and remote untouched", FirstUploadDeclined);
+        await RunAsync("first upload preserves a ZIP that appears while the prompt is open", FirstUploadConflict);
+        await RunAsync("first upload revalidates the mapping after consent", FirstUploadMappingChanged);
+        await RunAsync("unreachable remote is not treated as an absent ZIP", RemoteLookupFailed);
         await RunAsync("populated modPath is protected and archive download leaves files intact", PopulatedTargetRefused);
         await RunAsync("ZIP download never queues automatic loose-folder bisync", NoBackgroundBisync);
         Console.WriteLine($"InstallModRestoration ZIP integration tests: {passed} passed, {failed} failed");
@@ -132,8 +137,71 @@ internal static class Program
     {
         using var f = new Fixture();
         var result = await f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings())(CancellationToken.None, null, false);
-        Check(!result.Success && result.Message.Contains("cloud.zip"), "missing archive did not name the expected ZIP: " + result.Message);
-        Check(!File.Exists(Path.Combine(f.Local, "mod.txt")) && !Directory.Exists(f.State), "missing ZIP fell back to loose-file copy or mutated sync state");
+        Check(result.Success && f.Source.ConfirmCalls == 0, "missing archive prompted or failed despite no local mods: " + result.Message);
+        Check(!Directory.Exists(f.State), "missing ZIP mutated sync state");
+    }
+
+    private static async Task FirstUploadAccepted()
+    {
+        using var f = new Fixture();
+        File.WriteAllText(Path.Combine(f.Local, "mod.txt"), "installed mod");
+        var ui = Environment.CurrentManagedThreadId;
+        var prompted = false;
+        f.Source.ConfirmHandler = message =>
+        {
+            prompted = Environment.CurrentManagedThreadId == ui && message.Contains("Test library/mods") &&
+                !File.Exists(f.Cloud + ".zip");
+            return true;
+        };
+        var result = await f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings())(CancellationToken.None, null, false);
+        Check(result.Success && prompted && f.Source.ConfirmCalls == 1, "first upload did not ask on the UI before writing: " + result.Message);
+        using var zip = ZipFile.OpenRead(f.Cloud + ".zip");
+        using var reader = new StreamReader(zip.GetEntry("mod.txt").Open());
+        Check(reader.ReadToEnd() == "installed mod" && File.Exists(Path.Combine(f.State, "upload-baseline.txt")), "first upload didn't publish local mods and baseline");
+    }
+
+    private static async Task FirstUploadDeclined()
+    {
+        using var f = new Fixture();
+        var mod = Path.Combine(f.Local, "mod.txt");
+        File.WriteAllText(mod, "keep local");
+        var result = await f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings())(CancellationToken.None, null, false);
+        Check(result.Success && result.FirstUploadDeclined && f.Source.ConfirmCalls == 1, "decline was not treated as an optional skip: " + result.Message);
+        Check(!File.Exists(f.Cloud + ".zip") && !Directory.Exists(f.State) && File.ReadAllText(mod) == "keep local", "decline modified local or remote data");
+    }
+
+    private static async Task FirstUploadConflict()
+    {
+        using var f = new Fixture();
+        File.WriteAllText(Path.Combine(f.Local, "mod.txt"), "local");
+        f.Source.ConfirmHandler = _ => { File.WriteAllText(f.Cloud + ".zip", "new remote data"); return true; };
+        var result = await f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings())(CancellationToken.None, null, false);
+        Check(!result.Success && f.Source.ConfirmCalls == 1 && File.ReadAllText(f.Cloud + ".zip") == "new remote data", "upload overwrote a newly created remote archive");
+        Check(!File.Exists(Path.Combine(f.State, "upload-baseline.txt")), "conflict advanced upload baseline");
+    }
+
+    private static async Task FirstUploadMappingChanged()
+    {
+        using var f = new Fixture();
+        File.WriteAllText(Path.Combine(f.Local, "mod.txt"), "local");
+        f.Source.ConfirmHandler = _ => { f.Source.LiveManifest = "changed"; return true; };
+        Exception refused = null;
+        try { await f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings())(CancellationToken.None, null, false); }
+        catch (InvalidOperationException ex) { refused = ex; }
+        Check(refused?.Message.Contains("differs") == true && !File.Exists(f.Cloud + ".zip"), "accepted a changed mapping after the dialog");
+    }
+
+    private static async Task RemoteLookupFailed()
+    {
+        using var f = new Fixture();
+        File.WriteAllText(Path.Combine(f.Local, "mod.txt"), "local");
+        var settings = f.Settings();
+        settings.RcloneRemoteName = "not-configured";
+        IOException error = null;
+        try { await f.Source.Create(f.Game, f.Item(), f.Manifest(), settings)(CancellationToken.None, null, false); }
+        catch (IOException ex) { error = ex; }
+        Check(error?.Message.Contains("Could not safely check") == true && f.Source.ConfirmCalls == 0 && !Directory.Exists(f.State),
+            "remote failure presented an upload offer or mutated state");
     }
 
     private static async Task PopulatedTargetRefused()
@@ -143,7 +211,7 @@ internal static class Program
         using (var zip = ZipFile.Open(f.Cloud + ".zip", ZipArchiveMode.Create))
             using (var writer = new StreamWriter(zip.CreateEntry("new.txt").Open())) writer.Write("new");
         var result = await f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings())(CancellationToken.None, null, false);
-        Check(!result.Success && result.Message.Contains("not empty"), "populated modPath wasn't refused: " + result.Message);
+        Check(!result.Success && result.Message.Contains("not empty") && f.Source.ConfirmCalls == 0, "existing remote ZIP wasn't protected: " + result.Message);
         Check(File.ReadAllText(Path.Combine(f.Local, "keep.txt")) == "user data" && !File.Exists(Path.Combine(f.Local, "new.txt")), "target data changed");
     }
 
@@ -482,6 +550,7 @@ namespace PersonalCloudLibrarySource
                 RcloneExecutable = current.RcloneExecutablePath, TimeoutSeconds = current.ModSyncTimeoutSeconds };
         }
         private string GetProviderType(PersonalCloudLibrarySourceSettings value) => value.SourceProviderType;
+        private static string ResolveLibraryDisplayName(PersonalCloudLibrarySourceSettings value) => "Test library";
         private PersonalCloudLibraryManifest ParseManifest(string json) => Harness.Manifest(json == "changed" ? Harness.Item("different-mods") : Harness.Item());
         private string LoadManifestJson(PersonalCloudLibrarySourceSettings value, CancellationToken token)
         {
@@ -493,4 +562,4 @@ namespace PersonalCloudLibrarySource
         private bool ConfirmModSync(string message) { ConfirmCalls++; return ConfirmHandler(message); }
     }
 }
-namespace Playnite.SDK.Models { public class Game { public Guid Id { get; } = Guid.NewGuid(); public string GameId { get; set; } public string Name = "fixture"; public bool IsRunning { get; set; } public bool IsInstalled = true, IsInstalling; } }
+namespace Playnite.SDK.Models { public class Game { public Guid Id { get; } = Guid.NewGuid(); public string GameId { get; set; } public string Name = "fixture"; public bool IsRunning { get; set; } public bool IsInstalled = true, IsInstalling, IsLaunching, IsUninstalling; } }

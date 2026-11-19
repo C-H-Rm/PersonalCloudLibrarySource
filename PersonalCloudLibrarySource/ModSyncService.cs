@@ -41,6 +41,7 @@ namespace PersonalCloudLibrarySource
     public sealed class ModSyncResult
     {
         public bool Success { get; set; }
+        public bool FirstUploadDeclined { get; set; }
         public bool HasConflicts { get; set; }
         public string Message { get; set; }
         public bool Cancelled { get; set; }

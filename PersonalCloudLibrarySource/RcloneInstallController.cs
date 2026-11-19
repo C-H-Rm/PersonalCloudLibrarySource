@@ -85,7 +85,7 @@ namespace PersonalCloudLibrarySource
                 if (ShouldRestoreMods())
                 {
                     var result = await RestoreMods(operation);
-                    modsDownloaded = result?.Success == true && !result.HasConflicts;
+                    modsDownloaded = result?.Success == true && !result.HasConflicts && !result.FirstUploadDeclined;
                     FinishMods(operation, result);
                 }
                 else operation.Finish("Complete");
@@ -129,11 +129,14 @@ namespace PersonalCloudLibrarySource
             operation.Report("DownloadingMods", message: "Downloading cloud mods — no two-way synchronization");
             try
             {
-                return await restoreMods(operation.CancellationToken, progress => operation.Report("DownloadingMods",
-                    progress.Bytes, progress.TotalBytes > 0 ? (long?)progress.TotalBytes : null, progress.BytesPerSecond,
-                    percentage: progress.Percentage,
-                    message: ModSyncUserInteraction.ProgressText(progress.Phase, 0, 0,
-                        progress.Checks, progress.TotalChecks, 0)), false);
+                return await restoreMods(operation.CancellationToken, progress =>
+                {
+                    if (progress.Phase == "Mod upload") operation.Report("Mod upload", message: "Creating and uploading the first mod ZIP backup.");
+                    else operation.Report("DownloadingMods", progress.Bytes,
+                        progress.TotalBytes > 0 ? (long?)progress.TotalBytes : null, progress.BytesPerSecond,
+                        percentage: progress.Percentage, message: ModSyncUserInteraction.ProgressText(progress.Phase,
+                            0, 0, progress.Checks, progress.TotalChecks, 0));
+                }, false);
             }
             catch (OperationCanceledException) { return new ModSyncResult { Cancelled = true, Message = "Mod restoration cancelled; the game remains installed." }; }
             catch (Exception ex) { return new ModSyncResult { Message = ex.Message }; }
@@ -141,12 +144,17 @@ namespace PersonalCloudLibrarySource
 
         private void FinishMods(InstallProgressSession operation, ModSyncResult result)
         {
+            if (result?.FirstUploadDeclined == true)
+            {
+                operation.Finish("Skipped", result.Message, RetryMods, "Retry mods");
+                return;
+            }
             if (result == null || result.Success && !result.HasConflicts) { operation.Finish("Complete"); return; }
 
             var diagnostic = string.IsNullOrWhiteSpace(result.DiagnosticPath) ? "" : "\nDiagnostics: " + result.DiagnosticPath;
 
             operation.Finish(result.Cancelled ? "Cancelled" : "Failed",
-                "Game installed; mod download needs attention. " + result.Message + diagnostic,
+                "Game installed; mod transfer needs attention. " + result.Message + diagnostic,
                 RetryMods, "Retry mods");
         }
 
@@ -163,7 +171,7 @@ namespace PersonalCloudLibrarySource
                 }
                 Game.IsInstalling = true;
                 var result = await RestoreMods(operation);
-                downloaded = result?.Success == true && !result.HasConflicts;
+                downloaded = result?.Success == true && !result.HasConflicts && !result.FirstUploadDeclined;
                 FinishMods(operation, result);
             }
             catch (Exception ex)
