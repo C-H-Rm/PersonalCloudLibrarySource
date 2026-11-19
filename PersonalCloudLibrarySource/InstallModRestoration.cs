@@ -26,6 +26,7 @@ namespace PersonalCloudLibrarySource
             {
                 var currentSettings = settings.Settings;
                 string localModFolder = null;
+                string noModsMessage = null;
                 var restored = await Task.Run(() =>
                 {
                     token.ThrowIfCancellationRequested();
@@ -43,8 +44,13 @@ namespace PersonalCloudLibrarySource
                         InstallZipModArchive.RejectDirectoryLinks(current.LocalFolder);
                         if (!modZipUploadService.CloudZipExists(current))
                         {
-                            if (modZipUploadService.HasLocalFiles(current)) localModFolder = current.LocalFolder;
-                            return new ModSyncResult { Success = true, Message = "No cloud mod ZIP was found." };
+                            const string missingRemote = "No mod ZIP was found in Nextcloud.";
+                            if (!ModZipUploadService.LocalModFolderExists(current.LocalFolder))
+                                noModsMessage = missingRemote + "\n\nThere is no local mod folder at:\n" + current.LocalFolder;
+                            else if (!modZipUploadService.HasLocalFiles(current))
+                                noModsMessage = missingRemote + "\n\nThe local mod folder is empty. There is nothing to sync.";
+                            else localModFolder = current.LocalFolder;
+                            return new ModSyncResult { Success = true, Message = noModsMessage ?? missingRemote };
                         }
                         var localParent = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(current.LocalFolder));
                         if (string.IsNullOrWhiteSpace(localParent)) throw new InvalidOperationException("Mod destination has no parent directory.");
@@ -72,11 +78,12 @@ namespace PersonalCloudLibrarySource
                     finally { modSyncGate.Release(); }
                 }, token);
 
-                if (localModFolder == null) return restored;
                 token.ThrowIfCancellationRequested();
+                if (noModsMessage != null) ShowModMessage(noModsMessage);
+                if (localModFolder == null) return restored;
                 var folderLabel = Path.GetFileName(localModFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
                 var label = ResolveLibraryDisplayName(currentSettings) + "/" + folderLabel;
-                if (!ConfirmModSync($"No mod archive was found in the cloud, but there are mods in your local folder.\n\nUpload the mods from {label} as a ZIP backup?"))
+                if (!ConfirmModSync($"No mod ZIP was found in Nextcloud.\n\nSync the local mods from {label} to Nextcloud as a ZIP backup?"))
                     return new ModSyncResult { Success = true, FirstUploadDeclined = true, Message = "Mod upload skipped. Your local mods were kept." };
 
                 var approvedSettings = settings.Settings;

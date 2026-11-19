@@ -130,8 +130,28 @@ internal static class Program
             Check(service.UploadFirst(f.Request).Success && File.Exists(CloudZipPath(f)), "explicit upload did not recreate the ZIP");
         });
         Test("empty initial folder never uploads an empty ZIP", f => {
-            var result = new ModZipUploadService().UploadIfChanged(f.Request);
-            Check(!result.Success && !File.Exists(CloudZipPath(f)), "empty folder uploaded");
+            var service = new ModZipUploadService();
+            Check(!service.UploadFirst(f.Request).Success && !File.Exists(CloudZipPath(f)), "empty folder uploaded");
+        });
+        foreach (var localExists in new[] { false, true })
+        Test("uninstall does not need a backup for a " + (localExists ? "file-free folder" : "missing mod folder"), f => {
+            if (localExists) Directory.CreateDirectory(f.Path("empty-subfolder"));
+            else Directory.Delete(f.LocalRoot);
+            var zipPath = CloudZipPath(f);
+            File.WriteAllText(zipPath, "existing cloud backup");
+            f.Request.RcloneExecutable = System.IO.Path.Combine(f.Root, "rclone-must-not-run");
+            f.Request.BeforeCloudWrite = () => throw new Exception("uninstall attempted remote validation");
+            var service = new ModZipUploadService();
+            var result = service.UploadIfChanged(f.Request, beforeUninstall: true);
+            Check(result.Success && File.ReadAllText(zipPath) == "existing cloud backup", "uninstall blocked or changed the backup: " + result.Message);
+            File.Delete(zipPath);
+            Check(service.UploadIfChanged(f.Request, beforeUninstall: true).Success && !File.Exists(zipPath), "uninstall with no cloud backup did not skip the upload");
+        });
+        Test("pre-uninstall backup still refuses a file at the configured folder path", f => {
+            Directory.Delete(f.LocalRoot);
+            File.WriteAllText(f.LocalRoot, "keep local");
+            var result = new ModZipUploadService().UploadIfChanged(f.Request, beforeUninstall: true);
+            Check(!result.Success && File.ReadAllText(f.LocalRoot) == "keep local", "invalid folder was treated as absent");
         });
         Test("local addition uploads", f => {
             f.Local("keep", "keep"); f.Sync(); f.Local("new.txt", "new"); f.Sync();

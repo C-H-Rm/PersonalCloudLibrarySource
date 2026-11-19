@@ -27,7 +27,8 @@ internal static class Program
         Run("callback observes replacement settings instance", SettingsReplacementObserved);
         await RunAsync("mod synchronization gate cancellation stays safe", GateCancellation);
         await RunAsync("ZIP mod download uses actual rclone and installs archive-root contents", ZipDownloadInstall);
-        await RunAsync("missing ZIP and empty mod folder skip quietly", MissingZip);
+        await RunAsync("missing Nextcloud ZIP and missing local folder are shown without an upload offer", () => MissingZip(false));
+        await RunAsync("missing Nextcloud ZIP and empty local folder are shown without an upload offer", () => MissingZip(true));
         await RunAsync("first upload asks on the UI context and publishes only after Yes", FirstUploadAccepted);
         await RunAsync("declining first upload leaves files and remote untouched", FirstUploadDeclined);
         await RunAsync("first upload preserves a ZIP that appears while the prompt is open", FirstUploadConflict);
@@ -133,12 +134,24 @@ internal static class Program
             "ZIP restore should seed only the upload baseline, not initialize bisync state");
     }
 
-    private static async Task MissingZip()
+    private static async Task MissingZip(bool localExists)
     {
         using var f = new Fixture();
+        if (!localExists) Directory.Delete(f.Local);
+        var ui = Environment.CurrentManagedThreadId;
+        var shown = "";
+        f.Source.MessageHandler = message =>
+        {
+            Check(Environment.CurrentManagedThreadId == ui, "notice did not run on the UI context");
+            Check(f.Source.Gate.Wait(0), "notice ran under the mod operation gate");
+            f.Source.Gate.Release();
+            shown = message;
+        };
         var result = await f.Source.Create(f.Game, f.Item(), f.Manifest(), f.Settings())(CancellationToken.None, null, false);
         Check(result.Success && f.Source.ConfirmCalls == 0, "missing archive prompted or failed despite no local mods: " + result.Message);
-        Check(!Directory.Exists(f.State), "missing ZIP mutated sync state");
+        Check(shown.Contains("No mod ZIP was found in Nextcloud") && shown.Contains(localExists ? "folder is empty" : "no local mod folder"),
+            "missing ZIP/local state was not shown: " + shown);
+        Check(!Directory.Exists(f.State) && Directory.Exists(f.Local) == localExists, "missing ZIP mutated sync state or created a local folder");
     }
 
     private static async Task FirstUploadAccepted()
@@ -150,6 +163,7 @@ internal static class Program
         f.Source.ConfirmHandler = message =>
         {
             prompted = Environment.CurrentManagedThreadId == ui && message.Contains("Test library/mods") &&
+                message.Contains("No mod ZIP was found in Nextcloud") && message.Contains("Sync the local mods") &&
                 !File.Exists(f.Cloud + ".zip");
             return true;
         };
@@ -197,6 +211,7 @@ internal static class Program
         File.WriteAllText(Path.Combine(f.Local, "mod.txt"), "local");
         var settings = f.Settings();
         settings.RcloneRemoteName = "not-configured";
+        f.Source.MessageHandler = _ => throw new Exception("remote failure was shown as a missing ZIP");
         IOException error = null;
         try { await f.Source.Create(f.Game, f.Item(), f.Manifest(), settings)(CancellationToken.None, null, false); }
         catch (IOException ex) { error = ex; }
@@ -535,6 +550,7 @@ namespace PersonalCloudLibrarySource
         public string LiveManifest;
         public Exception LiveManifestError;
         public Func<string, bool> ConfirmHandler = _ => false;
+        public Action<string> MessageHandler = _ => { };
         internal PersonalCloudLibrarySource(Program.Fixture fixture) { Harness = fixture; settings = SettingsView; }
         public Func<CancellationToken, Action<ModSyncProgress>, bool, Task<ModSyncResult>> Create(Game game, PersonalCloudLibraryItem item,
             PersonalCloudLibraryManifest manifest, PersonalCloudLibrarySourceSettings initial)
@@ -560,6 +576,7 @@ namespace PersonalCloudLibrarySource
             return LiveManifest ?? "live";
         }
         private bool ConfirmModSync(string message) { ConfirmCalls++; return ConfirmHandler(message); }
+        private void ShowModMessage(string message) => MessageHandler(message);
     }
 }
 namespace Playnite.SDK.Models { public class Game { public Guid Id { get; } = Guid.NewGuid(); public string GameId { get; set; } public string Name = "fixture"; public bool IsRunning { get; set; } public bool IsInstalled = true, IsInstalling, IsLaunching, IsUninstalling; } }
