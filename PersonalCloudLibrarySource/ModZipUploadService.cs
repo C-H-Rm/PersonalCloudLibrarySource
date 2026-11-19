@@ -14,17 +14,32 @@ namespace PersonalCloudLibrarySource
         private readonly ModSyncProcess process = new ModSyncProcess();
 
         public ModSyncResult UploadIfChanged(ModSyncRequest request, bool beforeUninstall = false)
+            => Upload(request, firstUpload: false, beforeUninstall: beforeUninstall);
+
+        internal ModSyncResult UploadFirst(ModSyncRequest request)
+            => Upload(request, firstUpload: true, beforeUninstall: false);
+
+        private ModSyncResult Upload(ModSyncRequest request, bool firstUpload, bool beforeUninstall)
         {
             string archive = null;
             try
             {
                 Validate(request);
                 request.CancellationToken.ThrowIfCancellationRequested();
+                if (!LocalModFolderExists(request.LocalFolder))
+                    return new ModSyncResult { Success = !firstUpload, Message = "There is no local mod folder to back up." };
                 Directory.CreateDirectory(request.StateDirectory);
                 using (new FileStream(request.StateDirectory + ".zip-upload.lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
                 {
                     var files = ListFiles(request.LocalFolder);
-                    if (files.Length == 0) return new ModSyncResult { Success = false, Message = "Empty mod folders are not uploaded; the previous cloud ZIP is preserved." };
+                    if (files.Length == 0) return new ModSyncResult { Success = !firstUpload, Message = "The local mod folder is empty; no backup was needed." };
+
+                    var baselinePath = Path.Combine(request.StateDirectory, "upload-baseline.txt");
+                    var identity = Path.GetFullPath(request.LocalFolder) + "\n" + request.RemoteFolder;
+                    var stored = ReadBaseline(baselinePath, identity);
+                    if (!firstUpload && stored == null)
+                        return new ModSyncResult { Success = !beforeUninstall,
+                            Message = "No cloud mod backup has been initialized. Approve the first upload in Downloads, or restore an existing cloud ZIP first." };
 
                     ValidateNames(files.Select(path => Relative(request.LocalFolder, path).Replace(Path.DirectorySeparatorChar, '/')));
                     var total = 0L;
@@ -36,18 +51,18 @@ namespace PersonalCloudLibrarySource
                         total += length;
                     }
                     var snapshot = Snapshot(request.LocalFolder, files, request.CancellationToken);
-                    var baselinePath = Path.Combine(request.StateDirectory, "upload-baseline.txt");
-                    var identity = Path.GetFullPath(request.LocalFolder) + "\n" + request.RemoteFolder;
-                    var stored = ReadBaseline(baselinePath, identity);
-                    if (stored != null && stored == snapshot)
+                    if (!firstUpload && stored == snapshot)
                         return new ModSyncResult { Success = true, Message = "Mod ZIP unchanged; no cloud transfer was needed." };
 
                     var remoteZip = request.RemoteFolder.TrimEnd('/') + ".zip";
                     request.CancellationToken.ThrowIfCancellationRequested();
                     if (request.BeforeCloudWrite != null && !request.BeforeCloudWrite())
                         throw new InvalidOperationException("The live mod mapping changed; upload was refused.");
-                    if (stored == null && RemoteExists(request, remoteZip))
-                        throw new InvalidOperationException("An existing cloud mod ZIP has no matching local upload baseline. It was preserved; restore/review it before enabling upload.");
+                    var remoteExists = CloudZipExists(request);
+                    if (firstUpload && remoteExists)
+                        throw new InvalidOperationException("A cloud mod ZIP already exists. It was not overwritten.");
+                    if (!firstUpload && !remoteExists)
+                        throw new InvalidOperationException("The cloud mod ZIP is missing. Approve the first upload in Downloads before creating a new backup.");
                     request.CancellationToken.ThrowIfCancellationRequested();
                     InstallZipModArchive.RequireFreeSpace(request.StateDirectory, total, "create");
                     archive = Path.Combine(request.StateDirectory, "upload-" + Guid.NewGuid().ToString("N") + ".zip");
@@ -77,12 +92,22 @@ namespace PersonalCloudLibrarySource
                     if (Snapshot(request.LocalFolder, ListFiles(request.LocalFolder), request.CancellationToken) != snapshot)
                         throw new IOException("Mod files changed while the ZIP was being built; no cloud update was published.");
                     var tempRemote = remoteZip + ".pcls-stage-" + Guid.NewGuid().ToString("N");
-                    Require(request, "copyto", archive, tempRemote);
-                    try { Require(request, "moveto", tempRemote, remoteZip, "--ignore-times"); }
+                    try
+                    {
+                        Require(request, "copyto", archive, tempRemote);
+                        if (firstUpload)
+                        {
+                            // Check again after staging, then ask rclone to skip existing objects at publication.
+                            // This narrows the race but does not provide an atomic cross-client lock.
+                            if (CloudZipExists(request))
+                                throw new IOException("A cloud mod ZIP appeared during upload. It was not overwritten.");
+                            Require(request, "moveto", tempRemote, remoteZip, "--ignore-existing", "--error-on-no-transfer");
+                        }
+                        else Require(request, "moveto", tempRemote, remoteZip, "--ignore-times");
+                    }
                     catch
                     {
-                        // Best-effort cleanup only; the published destination is not claimed atomic.
-                        Run(request, "deletefile", tempRemote);
+                        try { process.Run(request.RcloneExecutable, 15, "deletefile", tempRemote); } catch { }
                         throw;
                     }
                     WriteBaseline(baselinePath, identity, snapshot);
@@ -110,12 +135,28 @@ namespace PersonalCloudLibrarySource
                 Path.GetFullPath(request.LocalFolder) + "\n" + request.RemoteFolder, snapshot);
         }
 
-        private bool RemoteExists(ModSyncRequest request, string remoteZip)
+        internal bool HasLocalFiles(ModSyncRequest request) => ListFiles(request.LocalFolder).Length > 0;
+
+        internal static bool LocalModFolderExists(string path)
         {
-            var result = Run(request, "lsjson", remoteZip);
-            if (result.ExitCode == 0) return true;
-            if (result.ExitCode == 3) return false;
-            throw new IOException("Could not safely check the existing cloud ZIP before first upload. " + result.Log);
+            InstallZipModArchive.RejectDirectoryLinks(path);
+            FileAttributes attributes;
+            try { attributes = File.GetAttributes(path); }
+            catch (FileNotFoundException) { return false; }
+            catch (DirectoryNotFoundException) { return false; }
+            if ((attributes & FileAttributes.Directory) == 0 || (attributes & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("The configured local mod path is not a regular directory: " + path);
+            return true;
+        }
+
+        internal bool CloudZipExists(ModSyncRequest request)
+        {
+            var result = process.Run(request.RcloneExecutable, request.TimeoutSeconds, request.CancellationToken,
+                null, "lsjson", "--stat", request.RemoteFolder.TrimEnd('/') + ".zip");
+            request.CancellationToken.ThrowIfCancellationRequested();
+            if (result.ExitCode == 0) return result.Output.Trim() != "null";
+            if (result.ExitCode == 3 || result.ExitCode == 4) return false;
+            throw new IOException("Could not safely check for a cloud mod ZIP. " + result.Log);
         }
 
         private ModSyncCommandResult Run(ModSyncRequest request, params string[] args) =>
@@ -175,8 +216,8 @@ namespace PersonalCloudLibrarySource
             if (r == null || string.IsNullOrWhiteSpace(r.GameId) || string.IsNullOrWhiteSpace(r.LocalFolder) ||
                 string.IsNullOrWhiteSpace(r.RemoteFolder) || string.IsNullOrWhiteSpace(r.StateDirectory) || string.IsNullOrWhiteSpace(r.RcloneExecutable))
                 throw new InvalidOperationException("Incomplete mod ZIP upload configuration.");
-            if (!Path.IsPathRooted(r.LocalFolder) || !Path.IsPathRooted(r.StateDirectory) || !Directory.Exists(r.LocalFolder))
-                throw new InvalidOperationException("The installed mod folder or upload state path is missing.");
+            if (!Path.IsPathRooted(r.LocalFolder) || !Path.IsPathRooted(r.StateDirectory))
+                throw new InvalidOperationException("The mod folder and upload state paths must be absolute.");
             if (ModSyncService.IsWithin(r.StateDirectory, r.LocalFolder) || ModSyncService.IsWithin(r.LocalFolder, r.StateDirectory))
                 throw new InvalidOperationException("Mod upload state must be outside the mod folder.");
             if (File.Exists(r.LaunchFile) && ModSyncService.IsWithin(r.LaunchFile, r.LocalFolder))

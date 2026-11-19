@@ -211,7 +211,7 @@ class Program
             c.Install(new InstallActionArgs()); context.Until(() => !f.Game.IsInstalling);
             Check(mods == 0 && installed == 1 && f.Game.IsInstalled, "ineligible install restored mods or lost the base game");
         });
-        foreach (var mode in new[] { "failure", "cancelled", "exception", "conflicts" })
+        foreach (var mode in new[] { "failure", "cancelled", "exception", "conflicts", "first upload declined" })
         Test("mod-only retry retains base install after optional " + mode, () =>
         {
             using var f = new Fixture();
@@ -222,7 +222,8 @@ class Program
                 Check(!recover, "ordinary mod retry silently authorized state recovery");
                 if (++mods > 1) return Task.FromResult(new ModSyncResult { Success = true });
                 if (mode == "exception") throw new IOException("mod fixture failed");
-                return Task.FromResult(new ModSyncResult { Success = mode == "conflicts", HasConflicts = mode == "conflicts",
+                var declined = mode == "first upload declined";
+                return Task.FromResult(new ModSyncResult { Success = mode == "conflicts" || declined, HasConflicts = mode == "conflicts", FirstUploadDeclined = declined,
                     Cancelled = mode == "cancelled", Message = "optional mods fixture" });
             });
             c.Installed = () => { Check(Environment.CurrentManagedThreadId == context.Owner, "installed event off UI"); installed++; };
@@ -231,6 +232,7 @@ class Program
             var status = InstallProgressState.Shared.Get(f.Game.Id);
             Check(f.Game.IsInstalled && installed == 1 && cancelled == 0 && status.CanRetry && status.RetryLabel == "Retry mods",
                 "optional failure cancelled base install or lost retry status");
+            if (mode == "first upload declined") Check(status.Phase == "Skipped", "decline was presented as a failure");
             Check(InstallProgressState.Shared.Retry(f.Game.Id), "mod-only retry not offered");
             context.Until(() => !f.Game.IsInstalling);
             Check(copies == 1 && mods == 2 && installed == 1 && cancelled == 0 && InstallProgressState.Shared.Get(f.Game.Id) == null,

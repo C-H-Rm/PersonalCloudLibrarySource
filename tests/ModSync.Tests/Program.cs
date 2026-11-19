@@ -25,7 +25,7 @@ internal static class Program
             File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             f.Request.RcloneExecutable = wrapper;
             var service = new ModZipUploadService();
-            var first = service.UploadIfChanged(f.Request);
+            var first = service.UploadFirst(f.Request);
             Check(first.Success && File.Exists(CloudZipPath(f)), first.Message);
             var before = File.ReadAllLines(audit).Length;
             var second = service.UploadIfChanged(f.Request);
@@ -35,7 +35,7 @@ internal static class Program
         Test("ZIP upload catches equal-size/equal-time edits and deletions", f => {
             f.Local("mod.bin", "aaaa"); f.Local("remove.bin", "remove");
             var service = new ModZipUploadService();
-            Check(service.UploadIfChanged(f.Request).Success, "initial upload failed");
+            Check(service.UploadFirst(f.Request).Success, "initial upload failed");
             var stamp = File.GetLastWriteTimeUtc(f.Path("mod.bin"));
             File.WriteAllText(f.Path("mod.bin"), "bbbb"); File.SetLastWriteTimeUtc(f.Path("mod.bin"), stamp);
             File.Delete(f.Path("remove.bin"));
@@ -51,7 +51,7 @@ internal static class Program
             var calls = 0;
             f.Request.BeforeCloudWrite = () => { calls++; return true; };
             var service = new ModZipUploadService();
-            Check(service.UploadIfChanged(f.Request).Success && calls == 1, "changed upload skipped validation");
+            Check(service.UploadFirst(f.Request).Success && calls == 1, "first upload skipped validation");
             Check(service.UploadIfChanged(f.Request).Success && calls == 1, "unchanged upload validated or used the network");
             f.Local("mod", "changed"); f.Request.BeforeCloudWrite = () => false;
             Check(!service.UploadIfChanged(f.Request).Success, "changed mapping uploaded");
@@ -65,9 +65,9 @@ internal static class Program
             File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             f.Request.RcloneExecutable = wrapper;
             var service = new ModZipUploadService();
-            Check(!service.UploadIfChanged(f.Request).Success && !File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "upload-baseline.txt")), "failed upload advanced baseline");
+            Check(!service.UploadFirst(f.Request).Success && !File.Exists(System.IO.Path.Combine(f.Request.StateDirectory, "upload-baseline.txt")), "failed upload advanced baseline");
             f.Request.RcloneExecutable = real;
-            var retried = service.UploadIfChanged(f.Request);
+            var retried = service.UploadFirst(f.Request);
             Check(retried.Success && File.Exists(CloudZipPath(f)), retried.Message);
         });
         Test("successful install restore seed avoids unchanged re-upload", f => {
@@ -90,19 +90,21 @@ internal static class Program
             var link = System.IO.Path.Combine(f.Root, "linked-parent");
             Directory.CreateSymbolicLink(link, f.LocalRoot);
             f.Request.LocalFolder = System.IO.Path.Combine(link, "nested");
-            var result = new ModZipUploadService().UploadIfChanged(f.Request);
+            var result = new ModZipUploadService().UploadFirst(f.Request);
             Check(!result.Success && !File.Exists(CloudZipPath(f)), "linked ancestor was followed during upload");
         });
         Test("mod edits during upload stop pre-uninstall backup", f => {
             if (!OperatingSystem.IsLinux()) return;
             f.Local("mod", "older bytes");
+            var service = new ModZipUploadService();
+            Check(service.UploadFirst(f.Request).Success, "could not initialize the backup");
+            f.Local("mod", "edited bytes");
             var real = Environment.GetEnvironmentVariable("PCLS_RCLONE") ?? "rclone";
             var wrapper = System.IO.Path.Combine(f.Root, "edit-during-upload.sh");
             File.WriteAllText(wrapper, "#!/bin/sh\n\"" + real + "\" \"$@\" || exit $?\n" +
                 "if [ \"$1\" = copyto ]; then printf 'newer bytes' > \"" + f.Path("mod") + "\"; fi\n");
             File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             f.Request.RcloneExecutable = wrapper;
-            var service = new ModZipUploadService();
             var result = service.UploadIfChanged(f.Request, beforeUninstall: true);
             Check(!result.Success && File.ReadAllText(f.Path("mod")) == "newer bytes", "new edits were cleared for uninstall");
             f.Request.RcloneExecutable = real;
@@ -113,12 +115,43 @@ internal static class Program
         });
         Test("unknown existing cloud ZIP is preserved", f => {
             f.Local("mod", "local"); File.WriteAllText(CloudZipPath(f), "unknown cloud data");
-            var result = new ModZipUploadService().UploadIfChanged(f.Request);
+            var result = new ModZipUploadService().UploadFirst(f.Request);
             Check(!result.Success && File.ReadAllText(CloudZipPath(f)) == "unknown cloud data", "untracked cloud ZIP was overwritten");
         });
+        Test("automatic backup cannot bypass consent for a missing first ZIP", f => {
+            f.Local("mod", "keep local");
+            var service = new ModZipUploadService();
+            Check(service.UploadIfChanged(f.Request).Success && !File.Exists(CloudZipPath(f)), "interval uploaded without consent");
+            Check(!service.UploadIfChanged(f.Request, beforeUninstall: true).Success && !File.Exists(CloudZipPath(f)), "uninstall uploaded or discarded mods without consent");
+            Check(service.UploadFirst(f.Request).Success, "explicit upload failed");
+            File.Delete(CloudZipPath(f));
+            f.Local("mod", "newer local data");
+            Check(!service.UploadIfChanged(f.Request).Success && !File.Exists(CloudZipPath(f)), "an old baseline recreated a missing ZIP without consent");
+            Check(service.UploadFirst(f.Request).Success && File.Exists(CloudZipPath(f)), "explicit upload did not recreate the ZIP");
+        });
         Test("empty initial folder never uploads an empty ZIP", f => {
-            var result = new ModZipUploadService().UploadIfChanged(f.Request);
-            Check(!result.Success && !File.Exists(CloudZipPath(f)), "empty folder uploaded");
+            var service = new ModZipUploadService();
+            Check(!service.UploadFirst(f.Request).Success && !File.Exists(CloudZipPath(f)), "empty folder uploaded");
+        });
+        foreach (var localExists in new[] { false, true })
+        Test("uninstall does not need a backup for a " + (localExists ? "file-free folder" : "missing mod folder"), f => {
+            if (localExists) Directory.CreateDirectory(f.Path("empty-subfolder"));
+            else Directory.Delete(f.LocalRoot);
+            var zipPath = CloudZipPath(f);
+            File.WriteAllText(zipPath, "existing cloud backup");
+            f.Request.RcloneExecutable = System.IO.Path.Combine(f.Root, "rclone-must-not-run");
+            f.Request.BeforeCloudWrite = () => throw new Exception("uninstall attempted remote validation");
+            var service = new ModZipUploadService();
+            var result = service.UploadIfChanged(f.Request, beforeUninstall: true);
+            Check(result.Success && File.ReadAllText(zipPath) == "existing cloud backup", "uninstall blocked or changed the backup: " + result.Message);
+            File.Delete(zipPath);
+            Check(service.UploadIfChanged(f.Request, beforeUninstall: true).Success && !File.Exists(zipPath), "uninstall with no cloud backup did not skip the upload");
+        });
+        Test("pre-uninstall backup still refuses a file at the configured folder path", f => {
+            Directory.Delete(f.LocalRoot);
+            File.WriteAllText(f.LocalRoot, "keep local");
+            var result = new ModZipUploadService().UploadIfChanged(f.Request, beforeUninstall: true);
+            Check(!result.Success && File.ReadAllText(f.LocalRoot) == "keep local", "invalid folder was treated as absent");
         });
         Test("local addition uploads", f => {
             f.Local("keep", "keep"); f.Sync(); f.Local("new.txt", "new"); f.Sync();

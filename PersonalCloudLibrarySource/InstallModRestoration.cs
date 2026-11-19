@@ -1,5 +1,6 @@
 using Playnite.SDK.Models;
 using System;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -20,12 +21,13 @@ namespace PersonalCloudLibrarySource
             try { imported = BuildModSyncRequest(item, manifest, initialSettings); }
             catch (Exception ex) { mappingError = ex; }
 
-            // Legacy bool is retained for caller compatibility, not recovery consent.
-            // Installation only downloads. No comparison, upload, relink or bisync here.
+            // The legacy bool never grants consent. First upload requires a new explicit Yes.
             return async (token, progress, unusedRecovery) =>
             {
                 var currentSettings = settings.Settings;
-                return await Task.Run(() =>
+                string localModFolder = null;
+                string noModsMessage = null;
+                var restored = await Task.Run(() =>
                 {
                     token.ThrowIfCancellationRequested();
                     if (currentSettings == null || !currentSettings.Enabled || !currentSettings.EnableModSync) return null;
@@ -40,6 +42,16 @@ namespace PersonalCloudLibrarySource
                             throw new InvalidOperationException("The current cloud mod remote changed.");
                         var remoteZip = current.RemoteFolder.Substring(prefix.Length) + ".zip";
                         InstallZipModArchive.RejectDirectoryLinks(current.LocalFolder);
+                        if (!modZipUploadService.CloudZipExists(current))
+                        {
+                            const string missingRemote = "No mod ZIP was found in Nextcloud.";
+                            if (!ModZipUploadService.LocalModFolderExists(current.LocalFolder))
+                                noModsMessage = missingRemote + "\n\nThere is no local mod folder at:\n" + current.LocalFolder;
+                            else if (!modZipUploadService.HasLocalFiles(current))
+                                noModsMessage = missingRemote + "\n\nThe local mod folder is empty. There is nothing to sync.";
+                            else localModFolder = current.LocalFolder;
+                            return new ModSyncResult { Success = true, Message = noModsMessage ?? missingRemote };
+                        }
                         var localParent = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(current.LocalFolder));
                         if (string.IsNullOrWhiteSpace(localParent)) throw new InvalidOperationException("Mod destination has no parent directory.");
                         System.IO.Directory.CreateDirectory(localParent);
@@ -62,6 +74,30 @@ namespace PersonalCloudLibrarySource
                             catch (Exception ex) { return new ModSyncResult { Message = "Could not install optional mod ZIP " + remoteZip + ": " + ex.Message }; }
                         }
                         finally { if (System.IO.File.Exists(tempArchive)) System.IO.File.Delete(tempArchive); }
+                    }
+                    finally { modSyncGate.Release(); }
+                }, token);
+
+                token.ThrowIfCancellationRequested();
+                if (noModsMessage != null) ShowModMessage(noModsMessage);
+                if (localModFolder == null) return restored;
+                var folderLabel = Path.GetFileName(localModFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                var label = ResolveLibraryDisplayName(currentSettings) + "/" + folderLabel;
+                if (!ConfirmModSync($"No mod ZIP was found in Nextcloud.\n\nSync the local mods from {label} to Nextcloud as a ZIP backup?"))
+                    return new ModSyncResult { Success = true, FirstUploadDeclined = true, Message = "Mod upload skipped. Your local mods were kept." };
+
+                var approvedSettings = settings.Settings;
+                progress?.Invoke(new ModSyncProgress { Phase = "Mod upload" });
+                return await Task.Run(() =>
+                {
+                    modSyncGate.Wait(token);
+                    try
+                    {
+                        if (approvedSettings == null || !approvedSettings.Enabled || !approvedSettings.EnableModSync ||
+                            !game.IsInstalled || game.IsRunning || game.IsLaunching || game.IsUninstalling)
+                            return new ModSyncResult { Message = "First mod upload is no longer available. No ZIP was uploaded." };
+                        var current = LoadCurrentInstallModRequest(game, imported, approvedSettings, token, null);
+                        return modZipUploadService.UploadFirst(current);
                     }
                     finally { modSyncGate.Release(); }
                 }, token);
