@@ -93,8 +93,14 @@ namespace PersonalCloudLibrarySource
                     try
                     {
                         Require(request, "copyto", archive, tempRemote);
-                        // Skip a destination rclone detects at publication; this is not a distributed lock.
-                        if (firstUpload) Require(request, "moveto", tempRemote, remoteZip, "--ignore-existing", "--error-on-no-transfer");
+                        if (firstUpload)
+                        {
+                            // Check again after staging, then ask rclone to skip existing objects at publication.
+                            // This narrows the race but does not provide an atomic cross-client lock.
+                            if (CloudZipExists(request))
+                                throw new IOException("A cloud mod ZIP appeared during upload. It was not overwritten.");
+                            Require(request, "moveto", tempRemote, remoteZip, "--ignore-existing", "--error-on-no-transfer");
+                        }
                         else Require(request, "moveto", tempRemote, remoteZip, "--ignore-times");
                     }
                     catch

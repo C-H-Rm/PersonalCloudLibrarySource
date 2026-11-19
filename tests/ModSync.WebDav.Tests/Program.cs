@@ -82,6 +82,21 @@ using (var reader = new StreamReader(archive.GetEntry("mod.bin").Open()))
 var preserved = File.ReadAllBytes(publishedZip);
 File.WriteAllText(Path.Combine(zipLocal, "mod.bin"), "failed replacement");
 if (OperatingSystem.IsLinux()) {
+    var racingZip = Path.Combine(root, "cloud", "games", "mods", "Game Name-zip-race.zip");
+    var racingRequest = new ModSyncRequest { GameId = "webdav-zip-race", LocalFolder = zipLocal,
+        RemoteFolder = request.RemoteFolder + "-zip-race", StateDirectory = Path.Combine(root, "zip-race-state"),
+        LaunchFile = launch, TimeoutSeconds = 60 };
+    var competitor = Path.Combine(root, "first-upload-race-rclone.sh");
+    File.WriteAllText(competitor, "#!/bin/sh\n[ \"$1\" != moveto ] || printf 'another client' > \"" + racingZip + "\"\n" +
+        "exec \"" + request.RcloneExecutable + "\" \"$@\"\n");
+    File.SetUnixFileMode(competitor, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+    racingRequest.RcloneExecutable = competitor;
+    var raced = zipService.UploadFirst(racingRequest);
+    Check(!raced.Success && File.ReadAllText(racingZip) == "another client" &&
+        !File.Exists(Path.Combine(racingRequest.StateDirectory, "upload-baseline.txt")) &&
+        !Directory.EnumerateFiles(Path.GetDirectoryName(racingZip), "*zip-race.zip.pcls-stage-*").Any(),
+        "first WebDAV upload skips a destination detected at publication and cleans staging");
+
     var wrapper = Path.Combine(root, "fail-publish-rclone.sh");
     File.WriteAllText(wrapper, "#!/bin/sh\n[ \"$1\" = moveto ] && exit 79\nexec \"" + request.RcloneExecutable + "\" \"$@\"\n");
     File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
